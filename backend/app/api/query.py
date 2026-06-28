@@ -61,12 +61,22 @@ async def generate_query(
 ):
     conn = _get_connection(req.connection_id, current_user.id, db)
 
+    # Use cached schema or auto-refresh if missing
     schema = conn.schema_cache
     if not schema:
-        raise HTTPException(
-            status_code=400,
-            detail="Schema not loaded. Please refresh schema first.",
-        )
+        from app.services.db_connector import get_schema, decrypt_password, build_connection_url
+        try:
+            url = conn.connection_string or build_connection_url(
+                conn.db_type, conn.host, conn.port,
+                conn.database, conn.username,
+                decrypt_password(conn.encrypted_password) if conn.encrypted_password else ""
+            )
+            schema = get_schema(url, conn.db_type)
+            conn.schema_cache = schema
+            conn.schema_cached_at = datetime.utcnow()
+            db.commit()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Schema not loaded and auto-refresh failed: {str(e)}")
 
     schema_context = get_relevant_schema_context(
         req.natural_language,
