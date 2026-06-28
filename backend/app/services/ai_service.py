@@ -282,25 +282,12 @@ Important:
 
 
 async def generate_schema_summary(schema: Dict[str, Any]) -> str:
-    """
-    Backward-compatible full schema summary.
-    Use get_relevant_schema_context() for token-efficient generation.
-    """
-    tables = schema.get("tables", [])
+    tables = schema.get("tables", [])[:8]  # limit to 8 tables max
     summary_parts = []
-
     for table in tables:
-        columns = table.get("columns", [])
-
         cols = ", ".join(
-            f"{c.get('name')} ({c.get('type')}"
-            f"{' PK' if c.get('primary_key') else ''}"
-            f"{' FK' if c.get('foreign_key') else ''})"
-            for c in columns
+            f"{c['name']} ({c['type']}{'  PK' if c.get('primary_key') else ''}{'  FK' if c.get('foreign_key') else ''})"
+            for c in table.get("columns", [])[:10]  # limit to 10 cols per table
         )
-
-        summary_parts.append(
-            f"Table: {table.get('name')}\nColumns: {cols}"
-        )
-
+        summary_parts.append(f"Table: {table['name']}\nColumns: {cols}")
     return "\n\n".join(summary_parts)
