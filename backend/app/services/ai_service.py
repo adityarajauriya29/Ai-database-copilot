@@ -40,50 +40,35 @@ DEFAULT_RESPONSE = {
 }
 
 
-SYSTEM_PROMPT = """
-You are an expert SQL assistant for a secure AI Database Copilot.
+SYSTEM_PROMPT = """You are an expert SQL assistant for any database schema.
+Given a database schema and a natural language query, generate valid SQL.
+Always respond with ONLY a JSON object. No markdown, no explanation outside JSON.
 
-Your job:
-1. Convert natural language into optimized SQL.
-2. Use only tables and columns available in the provided schema.
-3. Avoid SELECT * unless absolutely necessary.
-4. Prefer safe SELECT queries.
-5. Warn about UPDATE, DELETE, INSERT, ALTER, DROP, TRUNCATE.
-6. Never generate DROP or TRUNCATE.
-7. Never generate UPDATE or DELETE without WHERE.
-8. Return valid JSON only. No markdown. No explanation outside JSON.
-
-Return exactly this JSON format:
+Required JSON structure:
 {
-  "sql": "SQL query here",
-  "explanation": "simple explanation for non-technical users",
-  "confidence_score": 0.0,
-  "optimization_score": 0.0,
-  "risk_level": "low|medium|high|critical",
-  "risk_score": 0.0,
-  "risk_reasons": ["reason"],
-  "query_type": "SELECT|INSERT|UPDATE|DELETE|BLOCKED|UNKNOWN",
-  "estimated_rows": 0,
-  "estimated_time_ms": 0,
-  "alternatives": [
-    {
-      "sql": "alternative SQL",
-      "explanation": "why this alternative is useful",
-      "rank": 1,
-      "reason": "reason"
-    }
-  ],
-  "optimization_tips": ["tip"],
-  "learning_tips": ["tip"],
-  "clauses_explained": {
-    "SELECT": "meaning",
-    "FROM": "meaning",
-    "WHERE": "meaning"
-  },
-  "warnings": ["warning"]
+  "sql": "SELECT * FROM table WHERE condition",
+  "explanation": "plain English explanation",
+  "confidence_score": 0.85,
+  "optimization_score": 0.80,
+  "risk_level": "low",
+  "risk_score": 0.1,
+  "risk_reasons": [],
+  "query_type": "SELECT",
+  "estimated_rows": 10,
+  "estimated_time_ms": 20.0,
+  "alternatives": [],
+  "optimization_tips": [],
+  "learning_tips": [],
+  "clauses_explained": {},
+  "warnings": []
 }
-"""
 
+Rules:
+- sql field must always contain a valid SQL query string
+- Never return empty sql field
+- If unsure, generate the best possible SQL guess
+- query_type must be SELECT, INSERT, UPDATE, or DELETE
+- risk_level must be low, medium, high, or critical"""
 
 def detect_prompt_injection(text: str) -> bool:
     text_lower = text.lower()
@@ -223,7 +208,7 @@ async def generate_sql(
             "generate SQL, and explain in simple English."
         )
 
-    prompt = f"""
+    prompt = f"""{SYSTEM_PROMPT}
 {SYSTEM_PROMPT}
 
 {lang_instruction}
