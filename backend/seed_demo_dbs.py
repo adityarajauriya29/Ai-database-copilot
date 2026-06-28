@@ -94,19 +94,25 @@ def seed_university():
     conn = sqlite3.connect("demo_databases/university.db")
     c = conn.cursor()
     c.executescript("""
-    CREATE TABLE IF NOT EXISTS departments (
+    DROP TABLE IF EXISTS enrollments;
+    DROP TABLE IF EXISTS courses;
+    DROP TABLE IF EXISTS students;
+    DROP TABLE IF EXISTS professors;
+    DROP TABLE IF EXISTS departments;
+
+    CREATE TABLE departments (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         head_professor TEXT
     );
-    CREATE TABLE IF NOT EXISTS professors (
+    CREATE TABLE professors (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         department_id INTEGER REFERENCES departments(id),
         email TEXT,
         salary REAL
     );
-    CREATE TABLE IF NOT EXISTS students (
+    CREATE TABLE students (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE,
@@ -114,7 +120,7 @@ def seed_university():
         enrollment_year INTEGER,
         cgpa REAL
     );
-    CREATE TABLE IF NOT EXISTS courses (
+    CREATE TABLE courses (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         code TEXT UNIQUE,
@@ -122,7 +128,7 @@ def seed_university():
         credits INTEGER,
         professor_id INTEGER REFERENCES professors(id)
     );
-    CREATE TABLE IF NOT EXISTS enrollments (
+    CREATE TABLE enrollments (
         id INTEGER PRIMARY KEY,
         student_id INTEGER REFERENCES students(id),
         course_id INTEGER REFERENCES courses(id),
@@ -133,27 +139,27 @@ def seed_university():
 
     depts = [(1, "Computer Science", "Dr. Sharma"), (2, "Mathematics", "Dr. Gupta"),
              (3, "Physics", "Dr. Verma"), (4, "Electronics", "Dr. Singh")]
-    c.executemany("INSERT OR IGNORE INTO departments VALUES (?,?,?)", depts)
+    c.executemany("INSERT INTO departments VALUES (?,?,?)", depts)
 
     professors = [(i, f"Prof. {['Sharma','Gupta','Verma','Singh','Kumar'][i%5]} {i}",
                    (i % 4) + 1, f"prof{i}@university.edu",
                    round(random.uniform(60000, 120000), 2)) for i in range(1, 16)]
-    c.executemany("INSERT OR IGNORE INTO professors VALUES (?,?,?,?,?)", professors)
+    c.executemany("INSERT INTO professors VALUES (?,?,?,?,?)", professors)
 
     students = [(i, f"Student {i}", f"student{i}@uni.edu",
                  (i % 4) + 1, random.choice([2021, 2022, 2023, 2024]),
                  round(random.uniform(5.0, 10.0), 2)) for i in range(1, 101)]
-    c.executemany("INSERT OR IGNORE INTO students VALUES (?,?,?,?,?,?)", students)
+    c.executemany("INSERT INTO students VALUES (?,?,?,?,?,?)", students)
 
     courses = [(i, f"Course {i}", f"CS{100+i}", (i % 4) + 1,
                 random.choice([2, 3, 4]), random.randint(1, 15)) for i in range(1, 21)]
-    c.executemany("INSERT OR IGNORE INTO courses VALUES (?,?,?,?,?,?)", courses)
+    c.executemany("INSERT INTO courses VALUES (?,?,?,?,?,?)", courses)
 
     grades = ["A", "A+", "B", "B+", "C", "C+", "D", "F"]
     semesters = ["2023-ODD", "2023-EVEN", "2024-ODD"]
     enrollments = [(i, random.randint(1, 100), random.randint(1, 20),
                     random.choice(grades), random.choice(semesters)) for i in range(1, 301)]
-    c.executemany("INSERT OR IGNORE INTO enrollments VALUES (?,?,?,?,?)", enrollments)
+    c.executemany("INSERT INTO enrollments VALUES (?,?,?,?,?)", enrollments)
 
     conn.commit()
     conn.close()
