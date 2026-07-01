@@ -168,6 +168,27 @@ def get_relevant_schema_context(natural_language: str, schema: Dict[str, Any]) -
 
     return "\n\n".join(summary_parts)
 
+def fallback_sql(natural_language: str, schema_context: str) -> str:
+    nl = natural_language.lower()
+
+    if "student" in nl:
+        if "cgpa" in nl and "above" in nl:
+            number = re.search(r"\d+(\.\d+)?", nl)
+            cgpa = number.group(0) if number else "8.5"
+            return f"SELECT * FROM students WHERE cgpa > {cgpa};"
+        return "SELECT * FROM students;"
+
+    if "employee" in nl:
+        return "SELECT * FROM employees;"
+
+    if "product" in nl:
+        return "SELECT * FROM products;"
+
+    table_match = re.search(r"Table:\s*(\w+)", schema_context)
+    if table_match:
+        return f"SELECT * FROM {table_match.group(1)} LIMIT 50;"
+
+    return "SELECT 1;"
 
 async def generate_sql(
     natural_language: str,
@@ -258,12 +279,18 @@ Important:
         return failed
 
     except Exception as e:
-        failed = DEFAULT_RESPONSE.copy()
-        failed.update({
-            "explanation": "AI service failed. Please check Gemini API key, model name, or internet connection.",
-            "warnings": [str(e)],
-        })
-        return failed
+     sql = fallback_sql(natural_language, schema_context)
+
+    failed = DEFAULT_RESPONSE.copy()
+    failed.update({
+        "sql": sql,
+        "explanation": f"AI service failed, so fallback SQL was generated. Error: {str(e)}",
+        "confidence_score": 0.45,
+        "optimization_score": 0.5,
+        "query_type": "SELECT",
+        "warnings": [str(e), "Fallback SQL generated because AI service failed."],
+    })
+    return failed
 
 
 async def generate_schema_summary(schema: Dict[str, Any]) -> str:
