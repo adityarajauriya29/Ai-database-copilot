@@ -1,211 +1,396 @@
 # 🤖 AI Database Copilot
 
-> An enterprise-grade, schema-aware conversational database assistant that converts natural language into optimized SQL — with security controls, risk analysis, query explanations, and a premium dark-mode UI.
+> **AI Database Copilot** is an enterprise-grade, schema-aware conversational database assistant that converts natural language into optimized SQL queries using **Google Gemini AI**, while providing security controls, risk analysis, query explanations, execution insights, and an elegant enterprise UI.
+
+<p align="center">
+
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python)
+![Google Gemini](https://img.shields.io/badge/Google-Gemini_AI-4285F4?logo=google)
+![JWT](https://img.shields.io/badge/Auth-JWT-orange)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+</p>
 
 ---
 
-## ✨ Features
+# 🌐 Live Deployment
+
+## 🚀 Frontend (Vercel)
+
+**https://ai-database-copilot-five.vercel.app**
+
+## ⚡ Backend API (Render)
+
+**https://ai-database-copilot-aw7z.onrender.com**
+
+## 📖 API Documentation
+
+**https://ai-database-copilot-aw7z.onrender.com/api/docs**
+
+---
+
+# ✨ Features
 
 | Feature | Details |
 |---|---|
-| **NL → SQL** | Ask in plain English, get production-ready SQL |
-| **Multi-model AI** | Gemini Flash for simple queries, Pro for complex JOINs/mutations |
-| **Schema-aware** | Reads your real schema — no hallucinated table names |
-| **SQL Firewall** | Blocks DROP, TRUNCATE, injection, unguarded DELETE/UPDATE |
-| **Confidence scores** | 0–100% with reasoning |
-| **Risk analyzer** | Low / Medium / High / Critical with explanation |
-| **Optimization engine** | Index suggestions, SELECT * warnings, JOIN analysis |
-| **Query alternatives** | 2–3 ranked alternatives per query |
-| **Clause explainer** | Beginner-friendly clause-by-clause breakdown |
-| **Execution engine** | Run queries safely with row limits & timeouts |
-| **Results table** | Sortable, paginated, up to 1000 rows |
-| **Share links** | Shareable URLs for any generated query |
-| **Audit log** | Tamper-evident hash-chain audit trail |
-| **Analytics** | Usage charts, risk distribution, top tables |
-| **History** | Search, filter, favorite, re-run past queries |
-| **Demo databases** | E-commerce, University, HR — seed data included |
-| **3 user modes** | Simple / Learning / Developer |
-| **JWT auth** | Access + refresh tokens, bcrypt passwords |
-| **RBAC** | Guest / User / Admin roles |
-| **Dark UI** | Glassmorphism, animations, split-pane layout |
+| **Natural Language → SQL** | Convert plain English into optimized SQL |
+| **Multi-Model AI** | Gemini Flash for simple queries, Gemini Pro for complex SQL |
+| **Schema Aware** | Generates queries using actual database schema |
+| **SQL Firewall** | Prevents SQL Injection, DROP, TRUNCATE, ALTER, unsafe DELETE/UPDATE |
+| **Confidence Score** | AI confidence for every generated query |
+| **Risk Analyzer** | Low / Medium / High / Critical query analysis |
+| **Optimization Engine** | Index suggestions, JOIN analysis, optimization hints |
+| **Clause Explainer** | Beginner-friendly explanation of SQL clauses |
+| **Alternative Queries** | Multiple optimized query suggestions |
+| **Execution Engine** | Secure execution with row limits & timeout |
+| **Results Viewer** | Sortable, paginated SQL result tables |
+| **Analytics Dashboard** | Query statistics and risk visualization |
+| **Query History** | Save, search, rerun and favorite previous queries |
+| **Audit Logging** | Tamper-evident SHA-256 audit trail |
+| **JWT Authentication** | Secure authentication with refresh tokens |
+| **Role-Based Access** | Guest, User and Admin roles |
+| **Responsive UI** | Enterprise-grade glassmorphism interface |
+| **Demo Databases** | University, HR and Ecommerce sample databases |
 
 ---
 
-## 🚀 Quick Start (Local Dev)
+# 📸 Application Screenshots
 
-### 1. Prerequisites
+> Add screenshots inside a **docs/** folder.
+
+## Login
+
+![Login](docs/login.png)
+
+---
+
+## Chat Interface
+
+![Chat](docs/chat.png)
+
+---
+
+## Analytics Dashboard
+
+![Analytics](docs/analytics.png)
+
+---
+
+## Query History
+
+![History](docs/history.png)
+
+---
+
+# 🏗️ System Architecture
+
+```text
+                  User
+                    │
+                    ▼
+          React + Vite Frontend
+                    │
+                    ▼
+        FastAPI REST API Backend
+                    │
+     ┌──────────────┼──────────────┐
+     ▼              ▼              ▼
+ Google Gemini   SQL Firewall   Analytics
+       │              │              │
+       └──────────────┼──────────────┘
+                      │
+                      ▼
+      SQLite / PostgreSQL / MySQL
+```
+
+---
+
+# 🚀 Quick Start
+
+## Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- A [Gemini API key](https://aistudio.google.com/)
-
-### 2. Clone & start
-
-```bash
-git clone <repo>
-cd ai-database-copilot
-chmod +x start.sh
-./start.sh
-```
-
-Then open: **http://localhost:5173**
-
-### 3. Set your Gemini API key
-
-Edit `backend/.env`:
-
-```env
-GEMINI_API_KEY=your-key-here
-```
-
-Restart the backend after editing.
+- Google Gemini API Key
 
 ---
 
-## 🐳 Docker (Recommended)
+## Clone Repository
+
+```bash
+git clone https://github.com/adityarajauriya29/Ai-database-copilot.git
+
+cd Ai-database-copilot
+```
+
+---
+
+## Backend
+
+```bash
+cd backend
+
+python -m venv .venv
+
+source .venv/bin/activate
+
+pip install -r requirements.txt
+
+uvicorn app.main:app --reload
+```
+
+---
+
+## Frontend
+
+```bash
+cd frontend
+
+npm install
+
+npm run dev
+```
+
+---
+
+Frontend:
+
+```
+http://localhost:5173
+```
+
+Backend:
+
+```
+http://localhost:8000
+```
+
+API Docs:
+
+```
+http://localhost:8000/api/docs
+```
+
+---
+
+# 🐳 Docker Deployment
 
 ```bash
 cp backend/.env.example backend/.env
-# Edit backend/.env and add GEMINI_API_KEY
+
+# Add your Gemini API Key
 
 docker-compose up --build
 ```
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/api/docs
-
 ---
 
-## 📁 Project Structure
+# 📂 Project Structure
 
 ```
-ai-database-copilot/
+Ai-database-copilot/
+
+│
+
 ├── backend/
+
 │   ├── app/
-│   │   ├── api/          # FastAPI routers (auth, query, schema, analytics, history, ws)
-│   │   ├── core/         # Config, DB, Security
-│   │   ├── models/       # SQLAlchemy models (User, QueryHistory, Connection, AuditLog)
-│   │   ├── schemas/      # Pydantic schemas
-│   │   ├── services/     # AI service, SQL firewall, DB connector, audit service
+
+│   │   ├── api/
+
+│   │   ├── core/
+
+│   │   ├── models/
+
+│   │   ├── schemas/
+
+│   │   ├── services/
+
 │   │   └── main.py
-│   ├── demo_databases/   # Auto-seeded SQLite demo databases
-│   ├── seed_demo_dbs.py  # Seeds ecommerce / university / HR databases
+
+│   ├── demo_databases/
+
 │   ├── requirements.txt
+
 │   └── .env.example
+
 │
+
 ├── frontend/
+
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── chat/     # ConnectionSelector, NewConnectionModal
-│   │   │   ├── sql/      # RightPanel, ResultsTable, SqlPanel
-│   │   │   └── ui/       # Layout
-│   │   ├── pages/        # ChatPage, LoginPage, RegisterPage, AnalyticsPage, HistoryPage, SharedQueryPage
-│   │   ├── store/        # Zustand (auth + app state)
-│   │   └── utils/        # axios API client
-│   └── public/
+
+│   ├── public/
+
+│   ├── package.json
+
+│   └── vite.config.js
+
 │
+
 ├── docker-compose.yml
-├── start.sh
-└── README.md
+
+├── README.md
+
+└── docs/
 ```
 
 ---
 
-## 🔒 Security Architecture
+# 🔒 Security Features
 
-- **JWT** access + refresh tokens (configurable expiry)
-- **bcrypt** password hashing (12 rounds)
-- **SQL Firewall**: blocks DROP, TRUNCATE, ALTER, unguarded DELETE/UPDATE
-- **Prompt injection detection**: regex-based pattern blocking
-- **Read-only mode**: connections default to SELECT-only
-- **Risk confirmation**: high/critical queries require explicit `confirm=true`
-- **Tamper-evident audit log**: SHA-256 hash chain on every action
-- **Rate limiting**: 30 req/min per IP (configurable)
-- **RBAC**: Guest / User / Admin roles
-
----
-
-## 🎓 User Modes
-
-| Mode | Shows |
-|---|---|
-| **Simple** | Plain-language answer, query summary, results |
-| **Learning** | SQL query + clause-by-clause explanation + learning tips |
-| **Developer** | Full SQL + optimization score + performance metrics + alternatives |
+- JWT Authentication
+- Refresh Tokens
+- Password Hashing (bcrypt)
+- SQL Firewall
+- Prompt Injection Detection
+- Read-only Database Mode
+- Query Risk Classification
+- Rate Limiting
+- SHA-256 Audit Chain
+- Role-Based Access Control
 
 ---
 
-## 🗄️ Supported Databases
+# 🎓 User Modes
 
-| Database | Status |
-|---|---|
-| SQLite | ✅ Full support + demo databases |
-| PostgreSQL | ✅ Full support |
-| MySQL | ✅ Full support |
-| SQL Server | 🔜 Architecture ready |
-| Oracle | 🔜 Architecture ready |
+| Mode | Description |
+|------|-------------|
+| Simple | Easy-to-understand AI responses |
+| Learning | SQL explanation with learning tips |
+| Developer | Full SQL, optimization metrics and alternatives |
 
 ---
 
-## 🧪 Demo Databases
+# 🗄️ Supported Databases
 
-Connect instantly without your own database:
-
-| Demo | Tables | Description |
-|---|---|---|
-| `ecommerce` | customers, products, orders, order_items | 50 customers, 100 orders, 200 items |
-| `university` | students, departments, courses, professors, enrollments | 100 students, 20 courses |
-| `hr` | employees, departments, attendance, performance_reviews | 60 employees, 500 attendance records |
-
----
-
-## 🏗️ Tech Stack
-
-**Backend**: FastAPI · SQLAlchemy · Pydantic · Python-Jose · Passlib · SQLparse · Slowapi  
-**AI**: Google Gemini 2.0 Flash + 1.5 Pro (multi-model routing)  
-**Frontend**: React 18 · Vite · Tailwind CSS · Zustand · React Query · Framer Motion · Recharts  
-**Infra**: Docker · Nginx · Redis · SQLite/PostgreSQL/MySQL
+| Database | Support |
+|----------|---------|
+| SQLite | ✅ |
+| PostgreSQL | ✅ |
+| MySQL | ✅ |
+| SQL Server | 🔜 |
+| Oracle | 🔜 |
 
 ---
 
-## 📝 API Endpoints
+# 🧪 Demo Databases
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/auth/register` | Register new user |
-| POST | `/api/auth/login` | Login → JWT tokens |
-| GET | `/api/auth/me` | Get current user |
-| GET | `/api/schema/connections` | List DB connections |
-| POST | `/api/schema/connections` | Create connection |
-| POST | `/api/schema/demo/{name}/connect` | Connect demo DB |
-| POST | `/api/query/generate` | NL → SQL |
-| POST | `/api/query/execute` | Execute query |
-| GET | `/api/query/share/{token}` | Get shared query |
-| GET | `/api/history/` | Query history |
-| GET | `/api/analytics/dashboard` | Analytics data |
-| WS | `/api/ws/progress/{session}` | Live progress |
-
-Full interactive docs: http://localhost:8000/api/docs
+| Database | Description |
+|-----------|-------------|
+| University | Students, Courses, Professors |
+| HR | Employees, Attendance, Performance |
+| Ecommerce | Customers, Products, Orders |
 
 ---
 
-## 🎯 Resume Positioning
+# 🏗️ Tech Stack
 
-> **AI Database Copilot** — A secure, schema-aware, enterprise-grade conversational database assistant that converts natural language into optimized SQL queries, explains query behavior in plain English, predicts execution impact, enforces multi-layer security controls, and serves both technical and non-technical users via an adaptive AI interface built with FastAPI, React, and Google Gemini.
+### Frontend
 
-**Key talking points:**
-- Multi-model AI routing (Flash vs Pro based on query complexity)
-- Tamper-evident audit log with SHA-256 hash chain
-- SQL firewall with prompt injection detection
-- Confidence scoring + query alternatives + clause explainer
-- Three adaptive user modes (Simple / Learning / Developer)
-- Real-time WebSocket query progress
-- Sharable query links
-- Three fully-seeded demo databases
+- React 18
+- Vite
+- Tailwind CSS
+- Zustand
+- React Query
+- Framer Motion
+- Recharts
+
+### Backend
+
+- FastAPI
+- SQLAlchemy
+- Pydantic
+- Python-Jose
+- Passlib
+- SlowAPI
+- SQLParse
+
+### AI
+
+- Google Gemini Flash
+- Google Gemini Pro
+
+### Databases
+
+- SQLite
+- PostgreSQL
+- MySQL
+
+### Deployment
+
+- Vercel
+- Render
+- Docker
 
 ---
 
-## 📄 License
+# 📡 API Endpoints
 
-MIT — free to use, modify, and deploy.
+| Method | Endpoint |
+|---------|----------|
+| POST | `/api/auth/register` |
+| POST | `/api/auth/login` |
+| GET | `/api/auth/me` |
+| POST | `/api/query/generate` |
+| POST | `/api/query/execute` |
+| GET | `/api/query/share/{token}` |
+| GET | `/api/history` |
+| GET | `/api/analytics/dashboard` |
+
+---
+
+# 💼 Resume Highlights
+
+- AI-powered SQL generation using Google Gemini
+- Multi-model AI routing
+- SQL Firewall with Prompt Injection Detection
+- Enterprise-grade Authentication
+- Risk Prediction & Query Optimization
+- Analytics Dashboard
+- Real-time Query Execution
+- Multi-Database Support
+- Modern Responsive UI
+
+---
+
+# 🔮 Future Enhancements
+
+- SQL Server Support
+- Oracle Support
+- AI Query Auto Correction
+- Voice-to-SQL
+- Database ER Diagram Generator
+- Team Collaboration
+- Saved AI Prompts
+- Explain Execution Plans
+
+---
+
+# 👨‍💻 Developer
+
+**Aditya Rajauriya**
+
+B.Tech Computer Science Engineering
+
+AI • Machine Learning • Full Stack Development
+
+GitHub
+
+https://github.com/adityarajauriya29
+
+LinkedIn
+
+(Add your LinkedIn URL)
+
+---
+
+# 📄 License
+
+MIT License
+
+Copyright (c) 2026 Aditya Rajauriya
+
+Feel free to use, modify and distribute this project.
