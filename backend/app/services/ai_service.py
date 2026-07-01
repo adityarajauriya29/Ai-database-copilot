@@ -284,11 +284,11 @@ Important:
     failed = DEFAULT_RESPONSE.copy()
     failed.update({
         "sql": sql,
-        "explanation": f"AI service failed, so fallback SQL was generated. Error: {str(e)}",
+     "explanation": "AI service failed, so fallback SQL was generated.",
         "confidence_score": 0.45,
         "optimization_score": 0.5,
         "query_type": "SELECT",
-        "warnings": [str(e), "Fallback SQL generated because AI service failed."],
+        "warnings": ["Fallback SQL generated because AI service failed."],
     })
     return failed
 
