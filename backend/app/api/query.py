@@ -115,16 +115,16 @@ async def generate_query(
 
     sql = ai_result.get("sql", "").strip()
 
-# Debug log
-print("===== AI RESULT =====")
-print(ai_result)
+    # Debug log
+    print("===== AI RESULT =====")
+    print(ai_result)
 
-# If Gemini failed to generate SQL
-if not sql:
-    raise HTTPException(
-        status_code=400,
-        detail=f"AI failed to generate SQL. Full response: {ai_result}"
-    )
+    # If Gemini failed to generate SQL
+    if not sql:
+        raise HTTPException(
+            status_code=400,
+            detail=f"AI failed to generate SQL. Full response: {ai_result}"
+        )
 
     if ai_result.get("query_type") == "BLOCKED":
         write_audit_log(
