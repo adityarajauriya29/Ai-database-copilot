@@ -71,26 +71,8 @@ export default function DDLPanel({ connectionId, onSchemaRefresh }) {
     toast.success('Copied!')
   }
 
-  if (!isAdmin) {
-    return (
-      <div style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        justifyContent: 'center', padding: '32px 16px', textAlign: 'center', gap: '12px',
-      }}>
-        <div style={{
-          width: '48px', height: '48px', borderRadius: '12px',
-          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <AlertTriangle size={22} style={{ color: '#ef4444' }} />
-        </div>
-        <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Admin Required</p>
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)', maxWidth: '220px' }}>
-          DDL commands (CREATE, DROP, ALTER) require admin role. Contact your administrator.
-        </p>
-      </div>
-    )
-  }
+  // DDL is available to any user on a connection that has `allow_ddl` enabled.
+  // The backend still enforces the per-connection check.
 
   return (
     <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>

@@ -26,7 +26,7 @@ export default function ConnectionSelector() {
 
   const { data: connections = [], isLoading } = useQuery({
     queryKey: ['connections'],
-    queryFn: () => schemaAPI.getConnections().then((r) => r.data),
+    queryFn: () => schemaAPI.listConnections().then((r) => r.data),
   })
 
   const demoMut = useMutation({
@@ -39,7 +39,7 @@ export default function ConnectionSelector() {
         queryKey: ['connections'],
       })
 
-      const refreshed = await schemaAPI.getConnections()
+      const refreshed = await schemaAPI.listConnections()
 
       const demoName = `Demo: ${name.charAt(0).toUpperCase()}${name.slice(1)}`
 

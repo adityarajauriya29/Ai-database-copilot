@@ -111,8 +111,8 @@ async def generate_query(
     # DDL — admin only
     first_word = sql.upper().split()[0] if sql.split() else ""
     is_ddl = first_word in {"CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME"}
-    if is_ddl and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="DDL commands require admin role.")
+    if is_ddl and current_user.role != "admin" and not getattr(conn, "allow_ddl", False):
+        raise HTTPException(status_code=403, detail="DDL not allowed on this connection. Enable DDL mode first, or use a connection you own with DDL enabled.")
 
     warnings = []
     if not is_ddl:
@@ -206,8 +206,8 @@ async def execute_query_endpoint(
     first_word = sql.upper().split()[0] if sql.split() else ""
     is_ddl = first_word in {"CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME"}
 
-    if is_ddl and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="DDL execution requires admin role.")
+    if is_ddl and current_user.role != "admin" and not getattr(conn, "allow_ddl", False):
+        raise HTTPException(status_code=403, detail="DDL execution not allowed on this connection. Enable DDL mode first.")
 
     if not is_ddl:
         is_safe, reason, _ = validate_sql(sql, conn.is_readonly)
@@ -325,10 +325,9 @@ async def execute_ddl_direct(
     if not sql or not connection_id:
         raise HTTPException(status_code=400, detail="sql and connection_id required")
 
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="DDL execution requires admin role.")
-
     conn = _get_connection(connection_id, current_user.id, db)
+    if current_user.role != "admin" and not getattr(conn, "allow_ddl", False):
+        raise HTTPException(status_code=403, detail="DDL not allowed on this connection. Enable DDL mode from the connection settings first.")
     if conn.is_readonly:
         raise HTTPException(status_code=400, detail="Connection is read-only. Disable read-only mode to run DDL.")
 

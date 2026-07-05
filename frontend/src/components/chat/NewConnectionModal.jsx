@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import { motion } from 'framer-motion'
 
 const DB_TYPES = [
+  { value: 'create_blank', label: 'Create Empty Database (for DDL)', defaultPort: null },
   { value: 'upload_sqlite', label: 'Upload SQLite File', defaultPort: null },
   { value: 'sqlite', label: 'SQLite (file path)', defaultPort: null },
   { value: 'postgresql', label: 'PostgreSQL', defaultPort: 5432 },
@@ -60,10 +61,29 @@ export default function NewConnectionModal({ onClose }) {
     onError: (e) => toast.error(e.response?.data?.detail || 'Upload failed'),
   })
 
+  const createBlankMut = useMutation({
+    mutationFn: (name) => schemaAPI.createBlankSQLite(name),
+    onSuccess: async (r) => {
+      toast.success('Empty database ready — run DDL to build your schema!')
+      await qc.invalidateQueries({ queryKey: ['connections'] })
+      const refreshed = await schemaAPI.getConnections()
+      const conn = refreshed.data.find((c) => c.id === r.data.id)
+      if (conn) setActiveConnection(conn)
+      onClose()
+    },
+    onError: (e) => toast.error(e.response?.data?.detail || 'Could not create database'),
+  })
+
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
 
   const handleSubmit = (e) => {
     e.preventDefault()
+
+    if (form.db_type === 'create_blank') {
+      if (!form.name.trim()) { toast.error('Enter a name'); return }
+      createBlankMut.mutate(form.name)
+      return
+    }
 
     if (form.db_type === 'upload_sqlite') {
       if (!sqliteFile) {
@@ -83,7 +103,7 @@ export default function NewConnectionModal({ onClose }) {
     createMut.mutate(form)
   }
 
-  const isPending = createMut.isPending || uploadMut.isPending
+  const isPending = createMut.isPending || uploadMut.isPending || createBlankMut.isPending
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -134,7 +154,14 @@ export default function NewConnectionModal({ onClose }) {
             </select>
           </div>
 
-          {form.db_type === 'upload_sqlite' ? (
+          {form.db_type === 'create_blank' ? (
+            <div style={{fontSize:'12px',color:'#94a3b8',lineHeight:1.6,padding:'12px',background:'rgba(99,102,241,0.08)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:'8px'}}>
+              A brand-new empty SQLite database will be created on the server.
+              After it's created, switch to the <b>DDL panel</b> to run
+              <code> CREATE TABLE </code>, <code> ALTER TABLE </code>, etc.,
+              then use the AI chat to query it.
+            </div>
+          ) : form.db_type === 'upload_sqlite' ? (
             <div>
               <label className="text-xs text-slate-400 mb-1 block">
                 Choose SQLite file

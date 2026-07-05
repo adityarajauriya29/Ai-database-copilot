@@ -5,11 +5,23 @@ import time
 from cryptography.fernet import Fernet
 import os
 import re
+import warnings
 from pathlib import Path
 
 
-# Key for encrypting connection passwords
-_FERNET_KEY = os.getenv("FERNET_KEY", Fernet.generate_key())
+# ─── Fernet key ────────────────────────────────────────────────────────────────
+# IMPORTANT: If FERNET_KEY is not provided via env, we generate one at process
+# start. That means encrypted passwords stored in the DB become unreadable
+# after every restart. For production you MUST set FERNET_KEY in your env.
+_FERNET_KEY = os.getenv("FERNET_KEY")
+if not _FERNET_KEY:
+    warnings.warn(
+        "FERNET_KEY not set — generating an ephemeral key. Any encrypted "
+        "connection passwords in the DB will become unreadable after restart. "
+        "Set FERNET_KEY in your environment to fix this.",
+        RuntimeWarning,
+    )
+    _FERNET_KEY = Fernet.generate_key()
 
 if isinstance(_FERNET_KEY, str):
     _FERNET_KEY = _FERNET_KEY.encode()
@@ -178,24 +190,71 @@ def test_connection(connection_url: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
-# Demo seed databases
+# ─── Demo seed databases ──────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEMO_SQLITE_PATH = BASE_DIR / "demo_databases"
+USER_DB_PATH = BASE_DIR / "user_databases"
+
+
+def _ensure_demo_databases():
+    """Seed demo databases on demand if they are missing. This is the fix
+    for `Demo connection failed` on fresh deployments where the seed script
+    was not part of the build."""
+    if all(
+        (DEMO_SQLITE_PATH / f"{name}.db").exists()
+        for name in ("ecommerce", "university", "hr")
+    ):
+        return
+    try:
+        # seed_demo_dbs.py lives at backend/seed_demo_dbs.py — import lazily
+        import sys
+        sys.path.insert(0, str(BASE_DIR))
+        DEMO_SQLITE_PATH.mkdir(exist_ok=True)
+        # The script writes to relative "demo_databases/" — run it with cwd
+        # set to the backend folder so paths line up.
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(BASE_DIR))
+            import seed_demo_dbs  # noqa: F401  (side-effect: seeds files)
+        finally:
+            os.chdir(old_cwd)
+    except Exception as e:
+        warnings.warn(f"Demo DB auto-seed failed: {e}")
 
 
 def get_demo_connection_url(demo_name: str) -> str:
+    _ensure_demo_databases()
+
     demos = {
         "ecommerce": DEMO_SQLITE_PATH / "ecommerce.db",
         "university": DEMO_SQLITE_PATH / "university.db",
         "hr": DEMO_SQLITE_PATH / "hr.db",
     }
 
-    db_path = demos.get(demo_name, demos["ecommerce"])
+    db_path = demos.get(demo_name)
+    if db_path is None:
+        raise ValueError(f"Unknown demo database: {demo_name}")
 
     if not db_path.exists():
-        raise FileNotFoundError(f"Demo database not found: {db_path}")
+        raise FileNotFoundError(
+            f"Demo database file missing at {db_path}. "
+            "Run `python seed_demo_dbs.py` from the backend folder."
+        )
 
     return f"sqlite:///{db_path.as_posix()}"
+
+
+def create_blank_sqlite(user_id: int, name: str) -> Tuple[str, Path]:
+    """Create a brand-new empty SQLite database owned by the user.
+    Returns (connection_url, file_path)."""
+    USER_DB_PATH.mkdir(exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "database"
+    filename = f"user_{user_id}_{int(time.time())}_{safe}.db"
+    file_path = USER_DB_PATH / filename
+    # Just create the file — SQLite creates the schema container on first use.
+    file_path.touch()
+    return f"sqlite:///{file_path.as_posix()}", file_path
+
 
 def preview_table_data(
     connection_url: str,
