@@ -65,6 +65,19 @@ class ConnectionCreate(BaseModel):
     is_readonly: bool = True
 
 
+class EmptySQLiteCreate(BaseModel):
+    name: str
+
+    @validator("name")
+    def validate_name(cls, v):
+        v = v.strip()
+        if len(v) < 2:
+            raise ValueError("Connection name must be at least 2 characters")
+        if len(v) > 80:
+            raise ValueError("Connection name is too long")
+        return v
+
+
 class ConnectionResponse(BaseModel):
     id: int
     name: str

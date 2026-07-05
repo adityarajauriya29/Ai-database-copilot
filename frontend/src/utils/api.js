@@ -56,6 +56,7 @@ export const authAPI = {
 // ─── Schema / Connections ─────────────────────────────────────────────────────
 export const schemaAPI = {
   listConnections:  ()      => api.get('/schema/connections'),
+  getConnections:   ()      => api.get('/schema/connections'),
   createConnection: (data)  => api.post('/schema/connections', data),
   refreshSchema:    (id)    => api.post(`/schema/connections/${id}/refresh-schema`),
   getSchema:        (id)    => api.get(`/schema/connections/${id}/schema`),
@@ -69,6 +70,7 @@ export const schemaAPI = {
     api.post('/schema/connections/upload-sqlite', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
+  createEmptySQLite: (data) => api.post('/schema/connections/create-empty-sqlite', data),
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────

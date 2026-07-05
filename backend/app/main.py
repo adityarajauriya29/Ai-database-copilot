@@ -7,9 +7,10 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api import auth, query, schema, analytics, history, websocket
 from app.core.config import settings
-from app.core.database import engine, Base
+from app.core.database import engine, Base, ensure_schema_columns
 
 Base.metadata.create_all(bind=engine)
+ensure_schema_columns()
 
 limiter = Limiter(key_func=get_remote_address)
 

@@ -26,7 +26,7 @@ export default function ConnectionSelector() {
 
   const { data: connections = [], isLoading } = useQuery({
     queryKey: ['connections'],
-    queryFn: () => schemaAPI.listConnections().then((r) => r.data),
+    queryFn: () => schemaAPI.getConnections().then((r) => r.data),
   })
 
   const demoMut = useMutation({
@@ -39,7 +39,7 @@ export default function ConnectionSelector() {
         queryKey: ['connections'],
       })
 
-      const refreshed = await schemaAPI.listConnections()
+      const refreshed = await schemaAPI.getConnections()
 
       const demoName = `Demo: ${name.charAt(0).toUpperCase()}${name.slice(1)}`
 
@@ -133,7 +133,7 @@ export default function ConnectionSelector() {
               initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
-              className="absolute top-full left-0 right-0 mt-1 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden"
+              className="relative mt-2 z-50 bg-slate-800 border border-slate-700 rounded-lg shadow-xl overflow-hidden"
             >
               <div className="p-2 border-b border-slate-700">
                 <p className="text-xs text-slate-500 px-2 mb-1.5 flex items-center gap-1">

@@ -1,19 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Form
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from datetime import datetime
 from pathlib import Path
 import shutil
+import re
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.query import DatabaseConnection
-from app.schemas.schemas import ConnectionCreate, ConnectionResponse
+from app.schemas.schemas import ConnectionCreate, ConnectionResponse, EmptySQLiteCreate
 from app.services.db_connector import (
     get_schema, test_connection, encrypt_password, decrypt_password,
     build_connection_url, get_demo_connection_url, preview_table_data,
-    create_blank_sqlite,
 )
 from app.services.audit_service import write_audit_log
 
@@ -60,6 +59,12 @@ async def create_connection(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if data.db_type == "create_empty":
+        raise HTTPException(
+            status_code=400,
+            detail="Use /schema/connections/create-empty-sqlite to create a new empty SQLite database.",
+        )
+
     password = data.password or ""
     url = data.connection_string or build_connection_url(
         data.db_type, data.host, data.port, data.database, data.username, password
@@ -147,8 +152,6 @@ async def preview_table(
 
 
 # ─── DDL mode toggle ───────────────────────────────────────────────────────────
-# NOTE: Previously admin-only. Now any user can enable DDL on a connection
-# they own — otherwise there is no way to build your own database from the UI.
 
 @router.patch("/connections/{conn_id}/ddl-mode")
 async def toggle_ddl_mode(
@@ -156,6 +159,7 @@ async def toggle_ddl_mode(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Enable/disable DDL mode on a connection owned by the current user."""
     conn = _get_connection(conn_id, current_user.id, db)
     conn.allow_ddl = not getattr(conn, 'allow_ddl', False)
     if conn.allow_ddl:
@@ -175,6 +179,7 @@ async def toggle_readonly_mode(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Toggle read-only mode."""
     conn = _get_connection(conn_id, current_user.id, db)
     conn.is_readonly = not conn.is_readonly
     if conn.is_readonly:
@@ -186,6 +191,59 @@ async def toggle_readonly_mode(
         "allow_ddl": getattr(conn, 'allow_ddl', False),
         "message": f"Read-only {'enabled' if conn.is_readonly else 'disabled'}",
     }
+
+
+
+@router.post("/connections/create-empty-sqlite", response_model=ConnectionResponse, status_code=201)
+async def create_empty_sqlite_connection(
+    data: EmptySQLiteCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a brand-new empty SQLite database for user-run DDL commands."""
+    safe_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", data.name.strip()).strip("_").lower() or "database"
+
+    upload_dir = Path("uploaded_databases")
+    upload_dir.mkdir(exist_ok=True)
+    file_path = upload_dir / f"user_{current_user.id}_{int(datetime.utcnow().timestamp())}_{safe_slug}.sqlite"
+    file_path.touch(exist_ok=False)
+
+    url = f"sqlite:///{file_path.as_posix()}"
+    ok, msg = test_connection(url)
+    if not ok:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not create SQLite database: {msg}")
+
+    conn = DatabaseConnection(
+        user_id=current_user.id,
+        name=data.name.strip(),
+        db_type="sqlite",
+        database=str(file_path),
+        connection_string=url,
+        is_readonly=False,
+        allow_ddl=True,
+    )
+    db.add(conn)
+    db.commit()
+    db.refresh(conn)
+
+    schema = get_schema(url, "sqlite")
+    conn.schema_cache = schema
+    conn.schema_cached_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conn)
+
+    write_audit_log(
+        db,
+        "EMPTY_SQLITE_CREATED",
+        current_user.id,
+        "connection",
+        str(conn.id),
+        {"name": conn.name, "path": str(file_path)},
+        request.client.host if request.client else None,
+    )
+    return conn
 
 
 # ─── SQLite upload ─────────────────────────────────────────────────────────────
@@ -245,69 +303,6 @@ async def upload_sqlite_connection(
     }
 
 
-# ─── Create blank SQLite (build-your-own via DDL) ─────────────────────────────
-
-class BlankSQLiteRequest(BaseModel):
-    name: str
-
-
-@router.post("/connections/create-blank-sqlite", status_code=201)
-async def create_blank_sqlite_connection(
-    body: BlankSQLiteRequest,
-    request: Request,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Create a brand-new empty SQLite database for the current user.
-    The connection is created writeable and with allow_ddl=True so the
-    user can immediately run CREATE TABLE / ALTER TABLE from the UI."""
-    if not body.name.strip():
-        raise HTTPException(status_code=400, detail="Name is required")
-
-    url, file_path = create_blank_sqlite(current_user.id, body.name)
-
-    ok, msg = test_connection(url)
-    if not ok:
-        try:
-            file_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        raise HTTPException(status_code=400, detail=f"Could not initialize DB: {msg}")
-
-    conn = DatabaseConnection(
-        user_id=current_user.id,
-        name=body.name,
-        db_type="sqlite",
-        database=str(file_path),
-        connection_string=url,
-        is_readonly=False,
-        allow_ddl=True,
-    )
-    db.add(conn)
-    db.commit()
-    db.refresh(conn)
-
-    try:
-        conn.schema_cache = get_schema(url, "sqlite")
-        conn.schema_cached_at = datetime.utcnow()
-        db.commit()
-        db.refresh(conn)
-    except Exception:
-        pass
-
-    write_audit_log(db, "BLANK_DB_CREATED", current_user.id, "connection", str(conn.id),
-        {"name": conn.name}, request.client.host if request.client else None)
-
-    return {
-        "id": conn.id,
-        "name": conn.name,
-        "db_type": conn.db_type,
-        "allow_ddl": conn.allow_ddl,
-        "is_readonly": conn.is_readonly,
-        "message": "Empty database created — you can now run DDL commands on it.",
-    }
-
-
 # ─── Delete ────────────────────────────────────────────────────────────────────
 
 @router.delete("/connections/{conn_id}")
@@ -334,14 +329,7 @@ async def connect_demo(
     if demo_name not in valid_demos:
         raise HTTPException(status_code=400, detail=f"Valid demos: {valid_demos}")
 
-    # Surface the underlying reason to the frontend so the toast is useful
-    try:
-        url = get_demo_connection_url(demo_name)
-    except FileNotFoundError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Demo lookup error: {e}")
-
+    url = get_demo_connection_url(demo_name)
     ok, msg = test_connection(url)
     if not ok:
         raise HTTPException(status_code=400, detail=f"Demo connection failed: {msg}")
@@ -385,5 +373,4 @@ async def connect_demo(
     return {
         "connection_id": conn.id,
         "tables": len(conn.schema_cache.get("tables", []) if conn.schema_cache else []),
-        "message": f"Connected to demo database: {demo_name}",
     }
