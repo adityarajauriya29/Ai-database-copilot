@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Code2, BookOpen, Zap, Table2, AlertTriangle, Play, Download,
+  Code2, BookOpen, Zap, Table2, AlertTriangle, Play, Download, Wrench,
   Loader2, Copy, CheckCircle, X, ChevronDown, ChevronUp,
   TrendingUp, Shield, Lightbulb, BarChart2
 } from 'lucide-react'
 import clsx from 'clsx'
 import ResultsTable from './ResultsTable'
+import DDLPanel from './DDLPanel'
 
 const TABS = [
   { id: 'sql',          label: 'SQL',          icon: Code2 },
@@ -14,9 +15,10 @@ const TABS = [
   { id: 'optimization', label: 'Optimize',      icon: Zap },
   { id: 'impact',       label: 'Impact',        icon: AlertTriangle },
   { id: 'results',      label: 'Results',       icon: Table2 },
+  { id: 'ddl',          label: 'DDL',           icon: Wrench },
 ]
 
-export default function RightPanel({ queryResult, execResult, onExecute, isExecuting }) {
+export default function RightPanel({ queryResult, execResult, onExecute, isExecuting, connectionId, onSchemaRefresh, isPinned }) {
   const [activeTab, setActiveTab] = useState('sql')
 
   return (
@@ -85,6 +87,7 @@ export default function RightPanel({ queryResult, execResult, onExecute, isExecu
             {activeTab === 'optimization' && <OptimizationTab q={queryResult} />}
             {activeTab === 'impact'       && <ImpactTab q={queryResult} onExecute={onExecute} isExecuting={isExecuting} />}
             {activeTab === 'results'      && <ResultsTab execResult={execResult} onExecute={() => { onExecute(queryResult.id, true); setActiveTab('results') }} isExecuting={isExecuting} hasResult={!!execResult} />}
+            {activeTab === 'ddl'          && <DDLPanel connectionId={connectionId} onSchemaRefresh={onSchemaRefresh} />}
           </motion.div>
         </AnimatePresence>
       </div>

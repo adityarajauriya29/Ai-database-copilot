@@ -3,7 +3,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-# Auth schemas
+# ─── Auth ─────────────────────────────────────────────────────────────────────
+
 class UserCreate(BaseModel):
     email: EmailStr
     username: str
@@ -50,10 +51,11 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-# Connection schemas
+# ─── Connections ───────────────────────────────────────────────────────────────
+
 class ConnectionCreate(BaseModel):
     name: str
-    db_type: str  # postgresql, mysql, sqlite
+    db_type: str
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None
@@ -79,12 +81,13 @@ class ConnectionResponse(BaseModel):
         from_attributes = True
 
 
-# Query schemas
+# ─── Query ────────────────────────────────────────────────────────────────────
+
 class QueryRequest(BaseModel):
     natural_language: str
     connection_id: int
     session_id: Optional[str] = None
-    mode: str = "simple"  # simple, learning, developer
+    mode: str = "simple"
     language: str = "en"
 
     @validator("natural_language")
@@ -138,7 +141,8 @@ class ExecuteResponse(BaseModel):
     error: Optional[str] = None
 
 
-# History schemas
+# ─── History ──────────────────────────────────────────────────────────────────
+
 class QueryHistoryResponse(BaseModel):
     id: int
     natural_language: str
@@ -155,3 +159,47 @@ class QueryHistoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ─── DDL ──────────────────────────────────────────────────────────────────────
+
+class DDLGenerateRequest(BaseModel):
+    natural_language: str
+    connection_id: int
+
+    @validator("natural_language")
+    def validate_nl(cls, v):
+        if len(v.strip()) < 5:
+            raise ValueError("Description too short")
+        return v.strip()
+
+
+class DDLGenerateResponse(BaseModel):
+    sql: str
+    explanation: str
+    confidence_score: float
+    warnings: List[str]
+
+
+class DDLExecuteRequest(BaseModel):
+    sql: str
+    connection_id: int
+
+    @validator("sql")
+    def validate_ddl_sql(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("SQL cannot be empty")
+        first_word = v.upper().split()[0] if v.split() else ""
+        allowed = {"CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME"}
+        if first_word not in allowed:
+            raise ValueError(f"Only DDL statements allowed. Got: {first_word}")
+        return v
+
+
+class DDLExecuteResponse(BaseModel):
+    success: bool
+    message: str
+    rows_affected: int
+    execution_time_ms: float
+    schema_refreshed: bool

@@ -2,26 +2,14 @@ import re
 from typing import Tuple, List
 import sqlparse
 
+DDL_KEYWORDS = {"CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME"}
 
 BLOCKED_KEYWORDS = [
-    "DROP",
-    "TRUNCATE",
-    "ALTER",
-    "CREATE",
-    "GRANT",
-    "REVOKE",
-    "EXEC",
-    "EXECUTE",
-    "MERGE",
-    "CALL",
+    "GRANT", "REVOKE", "EXEC", "EXECUTE", "MERGE", "CALL",
 ]
 
-
 DANGEROUS_PATTERNS = [
-    r"\bDROP\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW)\b",
-    r"\bTRUNCATE\s+TABLE\b",
-    r"\bALTER\s+TABLE\b",
-    r"\bCREATE\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW)\b",
+    r"\bDROP\s+DATABASE\b",
     r"\bGRANT\b|\bREVOKE\b",
     r"\bEXEC\b|\bEXECUTE\b|\bCALL\b",
     r"\bxp_cmdshell\b",
@@ -55,12 +43,21 @@ def _has_limit_clause(sql: str) -> bool:
 
 
 def validate_sql(sql: str, is_readonly: bool = True) -> Tuple[bool, str, List[str]]:
+    """
+    Validates DML SQL statements. DDL statements must be handled
+    separately in query.py before calling this function.
+    """
     if not sql or not sql.strip():
         return False, "Empty SQL query", []
 
     sql_clean = _normalize_sql(sql)
     sql_upper = sql_clean.upper()
     warnings: List[str] = []
+
+    # Skip DDL validation here — handled in query.py
+    first_word = sql_upper.split()[0] if sql_upper.split() else ""
+    if first_word in DDL_KEYWORDS:
+        return True, "DDL — validated separately", []
 
     parsed = sqlparse.parse(sql_clean)
     if not parsed:
@@ -69,34 +66,35 @@ def validate_sql(sql: str, is_readonly: bool = True) -> Tuple[bool, str, List[st
     if len(parsed) > 1:
         return False, "Multiple SQL statements are not allowed", []
 
+    # Check dangerous patterns
     for pattern in DANGEROUS_PATTERNS:
         if re.search(pattern, sql_clean, re.IGNORECASE | re.MULTILINE | re.DOTALL):
             return False, "Blocked: dangerous SQL pattern detected", []
 
     stmt_type = _get_statement_type(sql_clean)
 
-    if stmt_type in BLOCKED_KEYWORDS:
-        return False, f"{stmt_type} statement is not permitted", []
+    # Block other non-whitelisted statements
+    for kw in BLOCKED_KEYWORDS:
+        if re.search(rf"\b{kw}\b", sql_upper):
+            return False, f"Blocked keyword '{kw}' found in SQL", []
 
-    if any(re.search(rf"\b{kw}\b", sql_upper) for kw in BLOCKED_KEYWORDS):
-        return False, "Blocked keyword found in SQL", []
-
-    if is_readonly and stmt_type != "SELECT":
+    # Read-only check
+    if is_readonly and stmt_type not in ("SELECT", "UNKNOWN"):
         return False, "Connection is in read-only mode. Only SELECT queries are allowed.", []
 
+    # Guard unguarded mutations
     if stmt_type == "UPDATE" and not _has_where_clause(sql_clean):
         return False, "UPDATE without WHERE clause is not allowed", []
 
     if stmt_type == "DELETE" and not _has_where_clause(sql_clean):
         return False, "DELETE without WHERE clause is not allowed", []
 
+    # Warnings
     if stmt_type == "SELECT":
         if re.search(r"\bSELECT\s+\*", sql_upper):
             warnings.append("Avoid SELECT *. Select only required columns for better performance.")
-
         if not _has_limit_clause(sql_upper):
             warnings.append("Consider adding LIMIT to avoid very large result sets.")
-
         if "CROSS JOIN" in sql_upper:
             warnings.append("CROSS JOIN may create a very large result set.")
 
@@ -104,6 +102,7 @@ def validate_sql(sql: str, is_readonly: bool = True) -> Tuple[bool, str, List[st
 
 
 def estimate_risk(sql: str) -> Tuple[str, float, List[str]]:
+    """Returns (risk_level, risk_score, risk_reasons)"""
     sql_clean = _normalize_sql(sql)
     sql_upper = sql_clean.upper()
     reasons: List[str] = []
@@ -114,41 +113,52 @@ def estimate_risk(sql: str) -> Tuple[str, float, List[str]]:
     except Exception:
         stmt_type = "UNKNOWN"
 
+    first_word = sql_upper.split()[0] if sql_upper.split() else ""
+
+    # DDL risk
+    if first_word == "DROP":
+        score += 0.85
+        reasons.append("DROP permanently deletes database objects")
+    elif first_word == "TRUNCATE":
+        score += 0.75
+        reasons.append("TRUNCATE removes all rows permanently")
+    elif first_word == "ALTER":
+        score += 0.5
+        reasons.append("ALTER modifies database structure")
+    elif first_word == "CREATE":
+        score += 0.1
+        reasons.append("CREATE adds new database objects")
+
+    # DML risk
     if stmt_type == "DELETE":
         score += 0.65
-        reasons.append("DELETE operation can permanently remove data.")
-
+        reasons.append("DELETE operation can permanently remove data")
     if stmt_type == "UPDATE":
         score += 0.55
-        reasons.append("UPDATE operation modifies existing records.")
-
+        reasons.append("UPDATE operation modifies existing records")
     if stmt_type == "INSERT":
         score += 0.25
-        reasons.append("INSERT operation adds new records.")
-
-    if stmt_type in ("DROP", "TRUNCATE", "ALTER", "CREATE"):
-        score += 1.0
-        reasons.append("DDL operation changes database structure.")
+        reasons.append("INSERT operation adds new records")
 
     if stmt_type in ("DELETE", "UPDATE") and not _has_where_clause(sql_clean):
         score += 0.4
-        reasons.append("No WHERE clause detected; operation may affect all rows.")
+        reasons.append("No WHERE clause — operation may affect ALL rows")
 
     if "JOIN" in sql_upper:
         score += 0.1
-        reasons.append("JOIN may be expensive on large tables.")
+        reasons.append("JOIN may be expensive on large tables")
 
     if "CROSS JOIN" in sql_upper:
         score += 0.25
-        reasons.append("CROSS JOIN may generate a large result set.")
+        reasons.append("CROSS JOIN may generate a very large result set")
 
     if re.search(r"\bSELECT\s+\*", sql_upper):
         score += 0.05
-        reasons.append("SELECT * returns all columns and may use more memory.")
+        reasons.append("SELECT * returns all columns")
 
     if not _has_limit_clause(sql_upper) and stmt_type == "SELECT":
         score += 0.05
-        reasons.append("SELECT query has no LIMIT clause.")
+        reasons.append("No LIMIT clause on SELECT")
 
     score = min(score, 1.0)
 
@@ -161,4 +171,4 @@ def estimate_risk(sql: str) -> Tuple[str, float, List[str]]:
     else:
         level = "low"
 
-    return level, score, reasons
+    return level, round(score, 2), reasons

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, Loader2, Bot, AlertTriangle,
@@ -52,6 +52,7 @@ export default function ChatPage() {
   const bottomRef  = useRef(null)
   const textareaRef = useRef(null)
 
+  const queryClient = useQueryClient()
   const { user }                    = useAuthStore()
   const {
     activeConnection, sessions, activeSessionId, createSession,
@@ -343,6 +344,14 @@ useEffect(() => {
           onExecute={(queryId, confirm) => executeMut.mutate({ query_id: queryId, confirm })}
           isExecuting={executeMut.isPending}
           isPinned={!!pinnedQuery}
+          connectionId={activeConnection?.id}
+          onSchemaRefresh={() => {
+            if (activeConnection?.id) {
+              schemaAPI.refreshSchema(activeConnection.id)
+                .then(() => queryClient.invalidateQueries(['schema', activeConnection.id]))
+                .catch(() => {})
+            }
+          }}
         />
       )}
     </div>
