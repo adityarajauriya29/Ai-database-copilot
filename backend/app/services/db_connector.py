@@ -193,7 +193,7 @@ def test_connection(connection_url: str) -> Tuple[bool, str]:
 # ─── Demo seed databases ──────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEMO_SQLITE_PATH = BASE_DIR / "demo_databases"
-USER_DB_PATH = BASE_DIR / "user_databases"
+USER_DB_PATH = BASE_DIR / "uploaded_databases"
 
 
 def _ensure_demo_databases():

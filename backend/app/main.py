@@ -1,16 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from app.api import auth, query, schema, analytics, history, websocket
 from app.core.config import settings
-from app.core.database import engine, Base, ensure_schema_columns
+from app.core.database import run_startup_migrations_in_background, get_migration_state
 
-Base.metadata.create_all(bind=engine)
-ensure_schema_columns()
+# Import routers after config/database imports. Do not perform database work at
+# module import time; Render must see the HTTP port quickly.
+from app.api import auth, query, schema, analytics, history, websocket
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -41,6 +40,20 @@ app.include_router(history.router, prefix="/api/history", tags=["History"])
 app.include_router(websocket.router, prefix="/api/ws", tags=["WebSocket"])
 
 
+@app.on_event("startup")
+async def startup_event():
+    run_startup_migrations_in_background()
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "AI Database Copilot"}
+
+
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "version": "1.0.0"}
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "migration": get_migration_state(),
+    }
