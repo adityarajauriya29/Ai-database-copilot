@@ -18,10 +18,23 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
-    # AI
+    # AI / LLM routing
+    # Primary is intentionally low-cost and token-efficient. Configure Groq/OpenRouter
+    # only when you want automatic fallback providers.
+    PRIMARY_LLM: str = "gemini"
+    FALLBACK_LLM: str = "groq"
+    OPTIONAL_LLM: str = "openrouter"
+
     GEMINI_API_KEY: str = ""
-    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash"
-    GEMINI_PRO_MODEL: str = "gemini-2.5-pro"
+    GEMINI_FLASH_MODEL: str = "gemini-2.0-flash-lite"
+    GEMINI_PRO_MODEL: str = "gemini-2.5-flash"
+
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_MODEL: str = "deepseek/deepseek-chat-v3-0324:free"
+    APP_URL: str = ""
 
     # CORS — default is permissive in development. In production set the env
     # var ALLOWED_ORIGINS to a JSON list of your real frontend URLs, or "*"

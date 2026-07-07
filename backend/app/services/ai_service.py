@@ -1,7 +1,8 @@
 import google.generativeai as genai
+import httpx
 import json
 import re
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from app.core.config import settings
 
 if settings.GEMINI_API_KEY:
@@ -10,7 +11,7 @@ if settings.GEMINI_API_KEY:
 COMPLEX_QUERY_KEYWORDS = [
     "update", "delete", "insert", "join", "subquery",
     "having", "union", "with", "group by", "nested",
-    "create table", "alter table", "drop table", "ddl", "schema"
+    "create", "drop", "alter", "truncate",
 ]
 
 INJECTION_PATTERNS = [
@@ -20,8 +21,14 @@ INJECTION_PATTERNS = [
     r"developer\s*:",
     r"<\s*script",
     r"drop\s+all\s+tables",
-    r";\s*(drop\s+database|truncate|delete\s+from)\s+",
+    r";\s*(drop|truncate|alter|delete\s+from)\s+",
 ]
+
+STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "give", "get", "in", "into",
+    "is", "list", "me", "of", "on", "or", "show", "table", "tables", "the", "to", "top", "with", "all",
+    "find", "fetch", "display", "details", "data", "records", "rows", "where", "whose", "which", "that",
+}
 
 DEFAULT_RESPONSE = {
     "sql": "",
@@ -41,42 +48,37 @@ DEFAULT_RESPONSE = {
     "warnings": [],
 }
 
+SYSTEM_PROMPT = """You are an expert SQL assistant. Generate SQL from natural language.
 
-SYSTEM_PROMPT = """You are an expert SQL assistant for a database copilot app.
-Given a database schema and a natural language request, generate valid SQL.
-Always respond with ONLY a JSON object. No markdown, no explanation outside JSON.
+Respond with ONLY a valid JSON object. No markdown, no backticks, no explanation outside JSON.
 
-Required JSON structure:
+JSON structure (all fields required):
 {
-  "sql": "SELECT * FROM table WHERE condition",
-  "explanation": "plain English explanation",
-  "confidence_score": 0.85,
-  "optimization_score": 0.80,
+  "sql": "SELECT id, name FROM students WHERE cgpa > 8.5;",
+  "explanation": "Fetches students with CGPA above 8.5",
+  "confidence_score": 0.92,
+  "optimization_score": 0.85,
   "risk_level": "low",
-  "risk_score": 0.1,
+  "risk_score": 0.05,
   "risk_reasons": [],
   "query_type": "SELECT",
-  "estimated_rows": 10,
-  "estimated_time_ms": 20.0,
+  "estimated_rows": 25,
+  "estimated_time_ms": 12.0,
   "alternatives": [],
-  "optimization_tips": [],
-  "learning_tips": [],
-  "clauses_explained": {},
+  "optimization_tips": ["Add index on cgpa column"],
+  "learning_tips": ["WHERE clause filters rows before returning results"],
+  "clauses_explained": {"SELECT": "Chooses columns", "WHERE": "Filters by cgpa"},
   "warnings": []
 }
 
-Rules:
-- sql field must always contain a valid SQL query string.
-- Never return empty sql field.
-- query_type must be SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP.
-- For table creation requests, generate CREATE TABLE SQL.
-- Prefer SQLite-compatible SQL unless the schema clearly belongs to PostgreSQL or MySQL.
-- Use IF NOT EXISTS for CREATE TABLE when appropriate.
-- For DDL, create safe SQL only. Do not generate CREATE DATABASE, DROP DATABASE, TRUNCATE, GRANT, REVOKE, EXEC, CALL.
-- For UPDATE and DELETE, always include a WHERE clause.
-- If unsure, generate the safest SELECT query or CREATE TABLE structure and include a warning.
-- risk_level must be low, medium, high, or critical.
-"""
+Critical rules:
+- sql must ALWAYS be a non-empty valid SQL string
+- alternatives must be a JSON array (can be empty [])
+- query_type: SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER
+- risk_level: low, medium, high, critical
+- Never invent table or column names not in the schema
+- Use only the schema provided in this prompt
+- For DDL (CREATE TABLE, ALTER TABLE, DROP TABLE): set query_type accordingly"""
 
 
 def detect_prompt_injection(text: str) -> bool:
@@ -84,24 +86,16 @@ def detect_prompt_injection(text: str) -> bool:
     return any(re.search(pattern, text_lower) for pattern in INJECTION_PATTERNS)
 
 
-def select_model(natural_language: str) -> str:
+def select_gemini_model(natural_language: str) -> str:
     nl_lower = natural_language.lower()
     needs_pro = any(keyword in nl_lower for keyword in COMPLEX_QUERY_KEYWORDS)
     return settings.GEMINI_PRO_MODEL if needs_pro else settings.GEMINI_FLASH_MODEL
 
 
-def detect_query_type(sql: str) -> str:
-    sql_upper = (sql or "").strip().upper()
-    match = re.match(r"^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b", sql_upper)
-    return match.group(1) if match else "UNKNOWN"
-
-
 def safe_json_parse(text: str) -> Dict[str, Any]:
-    text = text.strip()
+    text = (text or "").strip()
     text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
-    text = text.strip()
-
+    text = re.sub(r"```\s*", "", text).strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -111,353 +105,310 @@ def safe_json_parse(text: str) -> Dict[str, Any]:
         raise
 
 
-def normalize_result(result: Dict[str, Any], model_name: str) -> Dict[str, Any]:
+def normalize_result(result: Dict[str, Any], model_name: str, provider: str = "unknown") -> Dict[str, Any]:
     final = DEFAULT_RESPONSE.copy()
     final.update(result or {})
-
-    final["sql"] = str(final.get("sql") or "").strip()
-    detected_type = detect_query_type(final["sql"])
-    if detected_type != "UNKNOWN":
-        final["query_type"] = detected_type
-
     final["confidence_score"] = float(final.get("confidence_score") or 0)
     final["optimization_score"] = float(final.get("optimization_score") or 0)
     final["risk_score"] = float(final.get("risk_score") or 0)
-    final["alternatives"] = final.get("alternatives") or []
-    final["optimization_tips"] = final.get("optimization_tips") or []
-    final["learning_tips"] = final.get("learning_tips") or []
-    final["clauses_explained"] = final.get("clauses_explained") or {}
-    final["warnings"] = final.get("warnings") or []
-    final["risk_reasons"] = final.get("risk_reasons") or []
     final["_model_used"] = model_name
-
+    final["_provider_used"] = provider
+    if not isinstance(final.get("alternatives"), list):
+        final["alternatives"] = []
+    if not isinstance(final.get("warnings"), list):
+        final["warnings"] = [str(final.get("warnings"))]
     return final
 
 
-def get_relevant_schema_context(natural_language: str, schema: Dict[str, Any]) -> str:
-    words = set(re.findall(r"\w+", natural_language.lower()))
-    tables = schema.get("tables", [])
-    scored_tables = []
+def _tokens(text: str) -> List[str]:
+    words = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]*", (text or "").lower())
+    result = []
+    for w in words:
+        if w in STOP_WORDS or len(w) <= 1:
+            continue
+        result.append(w)
+        if w.endswith("s") and len(w) > 3:
+            result.append(w[:-1])
+        else:
+            result.append(w + "s")
+    return result
 
+
+def _table_text(table: Dict[str, Any]) -> str:
+    pieces = [str(table.get("name", ""))]
+    for c in table.get("columns", []) or []:
+        pieces.append(str(c.get("name", "")))
+        pieces.append(str(c.get("type", "")))
+        if c.get("foreign_key"):
+            pieces.append(str(c.get("foreign_key")))
+    return " ".join(pieces).lower()
+
+
+def _score_table(natural_language: str, table: Dict[str, Any]) -> Tuple[int, List[Dict[str, Any]]]:
+    words = set(_tokens(natural_language))
+    table_name = str(table.get("name", "")).lower()
+    table_name_parts = set(_tokens(table_name.replace("_", " ")))
+    columns = table.get("columns", []) or []
+
+    score = 0
+    if table_name in words or table_name.rstrip("s") in words:
+        score += 25
+    score += 8 * len(words & table_name_parts)
+
+    scored_columns = []
+    for col in columns:
+        col_name = str(col.get("name", "")).lower()
+        col_parts = set(_tokens(col_name.replace("_", " ")))
+        col_score = 0
+        if col_name in words or col_name.rstrip("s") in words:
+            col_score += 12
+        col_score += 5 * len(words & col_parts)
+        if col.get("primary_key"):
+            col_score += 1
+        if col.get("foreign_key"):
+            col_score += 2
+        if col_score > 0:
+            scored_columns.append((col_score, col))
+            score += col_score
+
+    # Light semantic boosts common in business databases.
+    joined_text = _table_text(table)
+    synonyms = {
+        "buy": ["order", "sale", "purchase", "invoice"],
+        "bought": ["order", "sale", "purchase", "invoice"],
+        "selling": ["order", "sale", "product"],
+        "revenue": ["amount", "total", "price", "payment", "order"],
+        "user": ["customer", "student", "employee", "account"],
+        "people": ["customer", "student", "employee", "user"],
+    }
+    for w in words:
+        for synonym in synonyms.get(w, []):
+            if synonym in joined_text:
+                score += 4
+
+    scored_columns.sort(key=lambda item: item[0], reverse=True)
+    return score, [c for _, c in scored_columns]
+
+
+def get_relevant_schema_context(natural_language: str, schema: Dict[str, Any], max_tables: int = 6, max_columns: int = 14) -> str:
+    """Token-efficient schema retrieval.
+
+    Sends only the most relevant tables/columns to the LLM instead of the full schema.
+    This is the main protection against token/context-limit errors on large databases.
+    """
+    tables = schema.get("tables", []) or []
+    if not tables:
+        return "No schema loaded."
+
+    scored = []
     for table in tables:
-        table_name = table.get("name", "")
-        table_words = set(re.findall(r"\w+", table_name.lower()))
-        columns = table.get("columns", [])
-
-        score = 0
-
-        if table_name.lower() in words:
-            score += 5
-
-        if table_words & words:
-            score += 3
-
-        for col in columns:
-            col_name = col.get("name", "")
-            col_words = set(re.findall(r"\w+", col_name.lower()))
-
-            if col_name.lower() in words:
-                score += 3
-
-            if col_words & words:
-                score += 2
-
+        score, matching_cols = _score_table(natural_language, table)
         if score > 0:
-            scored_tables.append((score, table))
+            scored.append((score, table, matching_cols))
 
-    scored_tables.sort(key=lambda x: x[0], reverse=True)
+    if not scored:
+        # For broad questions, keep only a compact table list.
+        scored = [(1, table, []) for table in tables[:max_tables]]
 
-    if scored_tables:
-        relevant_tables = [table for _, table in scored_tables[:6]]
-    else:
-        relevant_tables = tables[:8]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    selected = scored[:max_tables]
 
-    if not relevant_tables:
-        return "No existing tables found. You may generate DDL such as CREATE TABLE to define a new schema."
+    # Include directly related FK tables when available and still within limit.
+    selected_names = {str(t.get("name")) for _, t, _ in selected}
+    all_by_name = {str(t.get("name")): t for t in tables}
+    for _, table, _ in list(selected):
+        if len(selected) >= max_tables:
+            break
+        for col in table.get("columns", []) or []:
+            fk = col.get("foreign_key")
+            if not fk:
+                continue
+            ref_table = str(fk).split(".")[0]
+            if ref_table in all_by_name and ref_table not in selected_names:
+                selected.append((1, all_by_name[ref_table], []))
+                selected_names.add(ref_table)
+                if len(selected) >= max_tables:
+                    break
 
-    summary_parts = []
+    parts = [
+        "Relevant database schema only. Do not use tables or columns not listed here."
+    ]
+    for score, table, matching_cols in selected:
+        columns = table.get("columns", []) or []
+        important = []
+        seen = set()
 
-    for table in relevant_tables:
-        columns = table.get("columns", [])[:25]
+        # Keep matched columns first.
+        for col in matching_cols:
+            name = col.get("name")
+            if name and name not in seen:
+                important.append(col)
+                seen.add(name)
+
+        # Always keep PK/FK because joins need them.
+        for col in columns:
+            name = col.get("name")
+            if name and name not in seen and (col.get("primary_key") or col.get("foreign_key")):
+                important.append(col)
+                seen.add(name)
+
+        # Then add a few leading columns as context.
+        for col in columns:
+            name = col.get("name")
+            if len(important) >= max_columns:
+                break
+            if name and name not in seen:
+                important.append(col)
+                seen.add(name)
 
         col_text = ", ".join(
             f"{c.get('name')} ({c.get('type')}"
             f"{' PK' if c.get('primary_key') else ''}"
-            f"{' FK' if c.get('foreign_key') else ''})"
-            for c in columns
+            f"{' FK->' + str(c.get('foreign_key')) if c.get('foreign_key') else ''})"
+            for c in important
         )
-
-        summary_parts.append(
-            f"Table: {table.get('name')}\nColumns: {col_text}"
-        )
-
-    return "\n\n".join(summary_parts)
+        omitted = max(0, len(columns) - len(important))
+        suffix = f"; {omitted} other columns omitted" if omitted else ""
+        parts.append(f"Table: {table.get('name')}\nColumns: {col_text}{suffix}")
+    return "\n\n".join(parts)
 
 
-def is_database_builder_request(natural_language: str) -> bool:
+def fallback_sql(natural_language: str, schema_context: str) -> str:
     nl = natural_language.lower()
-    builder_words = [
-        "create database", "create a database", "database for", "management system",
-        "schema for", "build database", "design database", "create an app database",
-        "create ecommerce", "create e-commerce", "create hospital", "create library",
-        "create school", "create college", "create university", "create inventory",
-    ]
-    return any(word in nl for word in builder_words)
+    # Choose first table in relevant context; this is safer than hardcoded demo names.
+    table_match = re.search(r"Table:\s*([A-Za-z_][A-Za-z0-9_]*)", schema_context)
+    first_table = table_match.group(1) if table_match else None
+    if any(x in nl for x in ["show tables", "list tables", "all tables"]):
+        return "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;"
+    if first_table:
+        return f"SELECT * FROM {first_table} LIMIT 50;"
+    return "SELECT 1;"
 
 
-def _sqlite_type(type_name: str) -> str:
-    mapping = {
-        "id": "INTEGER",
-        "int": "INTEGER",
-        "integer": "INTEGER",
-        "number": "INTEGER",
-        "decimal": "DECIMAL(10,2)",
-        "amount": "DECIMAL(10,2)",
-        "price": "DECIMAL(10,2)",
-        "date": "DATE",
-        "time": "TIMESTAMP",
-        "text": "TEXT",
-        "email": "VARCHAR(120)",
-        "phone": "VARCHAR(20)",
-        "name": "VARCHAR(100)",
-    }
-    return mapping.get(type_name.lower(), type_name)
+def _build_prompt(natural_language: str, schema_context: str, conversation_history: Optional[List[Dict]], mode: str, language: str) -> str:
+    history_context = ""
+    if conversation_history:
+        short_history = conversation_history[-2:]
+        history_context = "\nCompressed Conversation Context:\n"
+        for msg in short_history:
+            user_text = str(msg.get("user", ""))[:160]
+            sql_text = str(msg.get("sql", ""))[:260]
+            history_context += f"Previous: {user_text}\nSQL: {sql_text}\n"
+
+    lang_instruction = ""
+    if language == "hi":
+        lang_instruction = "User may write in Hindi. Understand the request and generate SQL. Explain in English.\n"
+
+    verbosity_instruction = "Return concise explanations. Do not generate long learning content unless mode is developer."
+    if mode == "developer":
+        verbosity_instruction = "Developer mode: include useful but concise optimization and learning tips."
+
+    return f"""{SYSTEM_PROMPT}
+
+{lang_instruction}
+Mode: {mode}
+{verbosity_instruction}
+
+Database Schema:
+{schema_context}
+{history_context}
+
+User Request: {natural_language}
+
+Return ONLY the JSON object. sql field must not be empty."""
 
 
-def _builder_templates(natural_language: str) -> Dict[str, Any]:
-    nl = natural_language.lower()
+def _should_fallback_to_groq(error: Exception) -> bool:
+    message = str(error).lower()
+    return any(term in message for term in ["quota", "429", "rate", "token", "context", "timeout", "deadline", "503", "500", "unavailable"])
 
-    if any(k in nl for k in ["ecommerce", "e-commerce", "online shopping", "shopping"]):
-        name = "ecommerce"
-        summary = "Ecommerce database with customers, products, orders, and order items."
-        sql = """CREATE TABLE IF NOT EXISTS customers (
-    customer_id INTEGER PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    email VARCHAR(120) UNIQUE,
-    phone VARCHAR(20),
-    city VARCHAR(60),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
 
-CREATE TABLE IF NOT EXISTS products (
-    product_id INTEGER PRIMARY KEY,
-    product_name VARCHAR(120) NOT NULL,
-    category VARCHAR(80),
-    price DECIMAL(10,2) NOT NULL,
-    stock_quantity INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS orders (
-    order_id INTEGER PRIMARY KEY,
-    customer_id INTEGER NOT NULL,
-    order_date DATE NOT NULL,
-    status VARCHAR(30) DEFAULT 'pending',
-    total_amount DECIMAL(10,2) DEFAULT 0,
-    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-);
-
-CREATE TABLE IF NOT EXISTS order_items (
-    order_item_id INTEGER PRIMARY KEY,
-    order_id INTEGER NOT NULL,
-    product_id INTEGER NOT NULL,
-    quantity INTEGER NOT NULL,
-    unit_price DECIMAL(10,2) NOT NULL,
-    FOREIGN KEY (order_id) REFERENCES orders(order_id),
-    FOREIGN KEY (product_id) REFERENCES products(product_id)
-);"""
-        tables = ["customers", "products", "orders", "order_items"]
-    elif any(k in nl for k in ["hospital", "clinic", "medical"]):
-        name = "hospital_management"
-        summary = "Hospital database with patients, doctors, appointments, and billing."
-        sql = """CREATE TABLE IF NOT EXISTS patients (
-    patient_id INTEGER PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    gender VARCHAR(20),
-    date_of_birth DATE,
-    phone VARCHAR(20),
-    address TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS doctors (
-    doctor_id INTEGER PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    specialization VARCHAR(100),
-    phone VARCHAR(20),
-    email VARCHAR(120) UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS appointments (
-    appointment_id INTEGER PRIMARY KEY,
-    patient_id INTEGER NOT NULL,
-    doctor_id INTEGER NOT NULL,
-    appointment_date TIMESTAMP NOT NULL,
-    status VARCHAR(30) DEFAULT 'scheduled',
-    notes TEXT,
-    FOREIGN KEY (patient_id) REFERENCES patients(patient_id),
-    FOREIGN KEY (doctor_id) REFERENCES doctors(doctor_id)
-);
-
-CREATE TABLE IF NOT EXISTS bills (
-    bill_id INTEGER PRIMARY KEY,
-    patient_id INTEGER NOT NULL,
-    appointment_id INTEGER,
-    amount DECIMAL(10,2) NOT NULL,
-    payment_status VARCHAR(30) DEFAULT 'pending',
-    bill_date DATE NOT NULL,
-    FOREIGN KEY (patient_id) REFERENCES patients(patient_id),
-    FOREIGN KEY (appointment_id) REFERENCES appointments(appointment_id)
-);"""
-        tables = ["patients", "doctors", "appointments", "bills"]
-    elif any(k in nl for k in ["library", "books"]):
-        name = "library_management"
-        summary = "Library database with authors, books, members, and borrow records."
-        sql = """CREATE TABLE IF NOT EXISTS authors (
-    author_id INTEGER PRIMARY KEY,
-    author_name VARCHAR(100) NOT NULL,
-    country VARCHAR(60)
-);
-
-CREATE TABLE IF NOT EXISTS books (
-    book_id INTEGER PRIMARY KEY,
-    title VARCHAR(150) NOT NULL,
-    author_id INTEGER,
-    isbn VARCHAR(30) UNIQUE,
-    category VARCHAR(80),
-    available_copies INTEGER DEFAULT 0,
-    FOREIGN KEY (author_id) REFERENCES authors(author_id)
-);
-
-CREATE TABLE IF NOT EXISTS members (
-    member_id INTEGER PRIMARY KEY,
-    full_name VARCHAR(100) NOT NULL,
-    email VARCHAR(120) UNIQUE,
-    phone VARCHAR(20),
-    joined_at DATE DEFAULT CURRENT_DATE
-);
-
-CREATE TABLE IF NOT EXISTS borrow_records (
-    borrow_id INTEGER PRIMARY KEY,
-    member_id INTEGER NOT NULL,
-    book_id INTEGER NOT NULL,
-    borrow_date DATE NOT NULL,
-    return_date DATE,
-    status VARCHAR(30) DEFAULT 'borrowed',
-    FOREIGN KEY (member_id) REFERENCES members(member_id),
-    FOREIGN KEY (book_id) REFERENCES books(book_id)
-);"""
-        tables = ["authors", "books", "members", "borrow_records"]
-    else:
-        name = "student_management"
-        summary = "Student management database with departments, students, courses, and enrollments."
-        sql = """CREATE TABLE IF NOT EXISTS departments (
-    department_id INTEGER PRIMARY KEY,
-    department_name VARCHAR(100) NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS students (
-    student_id INTEGER PRIMARY KEY,
-    first_name VARCHAR(50) NOT NULL,
-    last_name VARCHAR(50) NOT NULL,
-    email VARCHAR(120) UNIQUE,
-    branch VARCHAR(80),
-    semester INTEGER,
-    cgpa DECIMAL(3,2),
-    phone VARCHAR(20),
-    city VARCHAR(60),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS courses (
-    course_id INTEGER PRIMARY KEY,
-    course_name VARCHAR(120) NOT NULL,
-    department_id INTEGER,
-    credits INTEGER DEFAULT 3,
-    FOREIGN KEY (department_id) REFERENCES departments(department_id)
-);
-
-CREATE TABLE IF NOT EXISTS enrollments (
-    enrollment_id INTEGER PRIMARY KEY,
-    student_id INTEGER NOT NULL,
-    course_id INTEGER NOT NULL,
-    enrollment_date DATE DEFAULT CURRENT_DATE,
-    grade VARCHAR(5),
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (course_id) REFERENCES courses(course_id)
-);"""
-        tables = ["departments", "students", "courses", "enrollments"]
-
-    return {
-        "sql": sql,
-        "explanation": summary,
-        "confidence_score": 0.78,
-        "optimization_score": 0.75,
-        "query_type": "CREATE",
-        "database_builder": {
-            "database_name": name,
-            "summary": summary,
-            "tables": tables,
-            "execution_order": tables,
+async def _generate_with_gemini(prompt: str, natural_language: str) -> Dict[str, Any]:
+    if not settings.GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+    model_name = select_gemini_model(natural_language)
+    model = genai.GenerativeModel(
+        model_name,
+        generation_config={
+            "temperature": 0.1,
+            "top_p": 0.8,
+            "top_k": 40,
+            "max_output_tokens": 1536,
+            "response_mime_type": "application/json",
         },
-        "warnings": [
-            "AI Database Builder generated multiple CREATE TABLE statements.",
-            "Execute this only on a writable connection. Schema will refresh after execution.",
+    )
+    response = model.generate_content(prompt)
+    text = response.text.strip()
+    print(f"[GEMINI RAW] model={model_name} len={len(text)} preview={text[:150]}")
+    return normalize_result(safe_json_parse(text), model_name, "gemini")
+
+
+async def _generate_with_groq(prompt: str) -> Dict[str, Any]:
+    if not settings.GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+    model_name = settings.GROQ_MODEL
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "You generate SQL and return only valid JSON."},
+            {"role": "user", "content": prompt},
         ],
+        "temperature": 0.1,
+        "max_tokens": 1536,
+        "response_format": {"type": "json_object"},
     }
-
-
-def fallback_sql(natural_language: str, schema_context: str) -> Dict[str, Any]:
-    nl = natural_language.lower()
-
-    if is_database_builder_request(natural_language):
-        result = _builder_templates(natural_language)
-        result["warnings"] = result.get("warnings", []) + ["Fallback schema builder was used because AI service failed or quota was exceeded."]
-        return result
-
-    create_match = re.search(r"create\s+(?:a\s+)?(?:new\s+)?(?:table\s+)?([a-zA-Z_][\w]*)\s*(?:table)?", nl)
-    if "create" in nl and ("table" in nl or not re.search(r"show|list|find|get", nl)):
-        table_name = create_match.group(1) if create_match else "records"
-        if table_name in {"a", "table", "new", "database", "the"}:
-            table_name = "records"
-        sql = f"""CREATE TABLE IF NOT EXISTS {table_name} (
-    id INTEGER PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);"""
-        return {
-            "sql": sql,
-            "explanation": f"Fallback generated a safe CREATE TABLE statement for {table_name}.",
-            "confidence_score": 0.45,
-            "optimization_score": 0.5,
-            "query_type": "CREATE",
-            "warnings": ["Fallback SQL generated because AI service failed."],
-        }
-
-    if "student" in nl:
-        if "cgpa" in nl and ("above" in nl or ">" in nl):
-            number = re.search(r"\d+(\.\d+)?", nl)
-            cgpa = number.group(0) if number else "8.5"
-            sql = f"SELECT * FROM students WHERE cgpa > {cgpa} LIMIT 50;"
-        else:
-            sql = "SELECT * FROM students LIMIT 50;"
-    elif "employee" in nl:
-        sql = "SELECT * FROM employees LIMIT 50;"
-    elif "product" in nl:
-        sql = "SELECT * FROM products LIMIT 50;"
-    else:
-        table_match = re.search(r"Table:\s*(\w+)", schema_context)
-        sql = f"SELECT * FROM {table_match.group(1)} LIMIT 50;" if table_match else "SELECT 1;"
-
-    return {
-        "sql": sql,
-        "explanation": "Fallback SQL was generated because the AI service failed.",
-        "confidence_score": 0.45,
-        "optimization_score": 0.5,
-        "query_type": detect_query_type(sql),
-        "warnings": ["Fallback SQL generated because AI service failed."],
+    headers = {
+        "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+        "Content-Type": "application/json",
     }
+    async with httpx.AsyncClient(timeout=35) as client:
+        response = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+    text = data["choices"][0]["message"]["content"].strip()
+    print(f"[GROQ RAW] model={model_name} len={len(text)} preview={text[:150]}")
+    return normalize_result(safe_json_parse(text), model_name, "groq")
+
+
+async def _generate_with_openrouter(prompt: str) -> Dict[str, Any]:
+    if not settings.OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured")
+    model_name = settings.OPENROUTER_MODEL
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": "You generate SQL and return only valid JSON."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1536,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": getattr(settings, "APP_URL", "https://ai-database-copilot.com"),
+        "X-Title": settings.APP_NAME,
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+    text = data["choices"][0]["message"]["content"].strip()
+    print(f"[OPENROUTER RAW] model={model_name} len={len(text)} preview={text[:150]}")
+    return normalize_result(safe_json_parse(text), model_name, "openrouter")
+
+
+async def _call_provider(provider: str, prompt: str, natural_language: str) -> Dict[str, Any]:
+    provider = (provider or "gemini").lower()
+    if provider == "gemini":
+        return await _generate_with_gemini(prompt, natural_language)
+    if provider == "groq":
+        return await _generate_with_groq(prompt)
+    if provider == "openrouter":
+        return await _generate_with_openrouter(prompt)
+    raise RuntimeError(f"Unsupported LLM provider: {provider}")
+
 
 async def generate_sql(
     natural_language: str,
@@ -466,101 +417,60 @@ async def generate_sql(
     mode: str = "simple",
     language: str = "en",
 ) -> Dict[str, Any]:
-
     if detect_prompt_injection(natural_language):
         blocked = DEFAULT_RESPONSE.copy()
         blocked.update({
-            "explanation": "Query blocked because a possible prompt injection attempt was detected.",
+            "explanation": "Query blocked: possible prompt injection detected.",
             "risk_level": "critical",
             "risk_score": 1.0,
             "risk_reasons": ["Prompt injection pattern detected"],
             "query_type": "BLOCKED",
-            "warnings": ["This request was blocked for security reasons."],
+            "warnings": ["Request blocked for security reasons."],
         })
         return blocked
 
-    model_name = select_model(natural_language)
+    prompt = _build_prompt(natural_language, schema_context, conversation_history, mode, language)
+    providers = []
+    for p in [settings.PRIMARY_LLM, settings.FALLBACK_LLM, settings.OPTIONAL_LLM]:
+        p = (p or "").strip().lower()
+        if p and p not in providers:
+            providers.append(p)
+    if not providers:
+        providers = ["gemini", "groq"]
 
-    history_context = ""
-    if conversation_history:
-        short_history = conversation_history[-3:]
-        history_context = "\nConversation Context:\n"
-        for msg in short_history:
-            history_context += (
-                f"Previous user request: {msg.get('user', '')}\n"
-                f"Previous SQL: {msg.get('sql', '')}\n"
-            )
+    errors = []
+    for idx, provider in enumerate(providers):
+        try:
+            result = await _call_provider(provider, prompt, natural_language)
+            if not result.get("sql", "").strip():
+                result["sql"] = fallback_sql(natural_language, schema_context)
+                result["warnings"] = result.get("warnings", []) + ["AI returned empty SQL; local fallback used"]
+                result["confidence_score"] = min(float(result.get("confidence_score") or 0), 0.45)
+            if errors:
+                result["warnings"] = result.get("warnings", []) + ["Primary LLM failed; fallback provider used"]
+            return result
+        except json.JSONDecodeError as e:
+            errors.append(f"{provider}: invalid JSON ({str(e)[:120]})")
+            print(f"[{provider.upper()} JSON ERROR] {e}")
+        except Exception as e:
+            errors.append(f"{provider}: {type(e).__name__}: {str(e)[:160]}")
+            print(f"[{provider.upper()} ERROR] {type(e).__name__}: {str(e)}")
+            # Continue to configured fallback providers for all errors. Token/quota errors are the common case.
+            continue
 
-    lang_instruction = ""
-    if language == "hi":
-        lang_instruction = (
-            "The user may ask in Hindi. Understand the request, "
-            "generate SQL, and explain in simple English."
-        )
-
-    prompt = f"""{SYSTEM_PROMPT}
-
-{lang_instruction}
-
-User Mode:
-{mode}
-
-Database Schema Context:
-{schema_context}
-
-{history_context}
-
-User Request:
-{natural_language}
-
-Important:
-- Return JSON only.
-- Use only provided schema for SELECT/INSERT/UPDATE/DELETE queries.
-- For CREATE TABLE requests, create the new table requested by the user.
-- If the user asks to create/design/build a database or management system, return multiple CREATE TABLE statements in the sql field, separated by semicolons.
-- For database builder requests, include a database_builder object with database_name, summary, tables, and execution_order.
-- If there are no existing tables, CREATE TABLE is allowed.
-- Do not invent existing table names for SELECT queries.
-- Do not generate CREATE DATABASE, DROP DATABASE, TRUNCATE, GRANT, REVOKE, EXEC, or CALL.
-"""
-
-    try:
-        if not settings.GEMINI_API_KEY:
-            fallback = fallback_sql(natural_language, schema_context)
-            fallback["explanation"] += " Gemini API key is missing."
-            return normalize_result(fallback, "fallback")
-
-        model = genai.GenerativeModel(
-            model_name,
-            generation_config={
-                "temperature": 0.2,
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 2048,
-                "response_mime_type": "application/json",
-            },
-        )
-
-        response = model.generate_content(prompt)
-        text = response.text.strip()
-
-        result = safe_json_parse(text)
-        normalized = normalize_result(result, model_name)
-        if not normalized["sql"]:
-            fallback = fallback_sql(natural_language, schema_context)
-            fallback["warnings"] = fallback.get("warnings", []) + ["AI returned empty SQL, so fallback SQL was used."]
-            return normalize_result(fallback, "fallback")
-        return normalized
-
-    except json.JSONDecodeError:
-        fallback = fallback_sql(natural_language, schema_context)
-        fallback["warnings"] = fallback.get("warnings", []) + ["AI JSON parsing failed, so fallback SQL was used."]
-        return normalize_result(fallback, "fallback")
-
-    except Exception as exc:
-        fallback = fallback_sql(natural_language, schema_context)
-        fallback["warnings"] = fallback.get("warnings", []) + [f"AI service error: {str(exc)}"]
-        return normalize_result(fallback, "fallback")
+    sql = fallback_sql(natural_language, schema_context)
+    failed = DEFAULT_RESPONSE.copy()
+    failed.update({
+        "sql": sql,
+        "explanation": "All configured AI providers failed. Local fallback SQL generated.",
+        "confidence_score": 0.35,
+        "optimization_score": 0.5,
+        "query_type": "SELECT" if sql.strip().lower().startswith("select") else "UNKNOWN",
+        "warnings": ["; ".join(errors)[:500], "Local fallback used."],
+        "_model_used": "local-fallback",
+        "_provider_used": "local",
+    })
+    return failed
 
 
 async def generate_schema_summary(schema: Dict[str, Any]) -> str:
@@ -568,7 +478,7 @@ async def generate_schema_summary(schema: Dict[str, Any]) -> str:
     summary_parts = []
     for table in tables:
         cols = ", ".join(
-            f"{c['name']} ({c['type']}{'  PK' if c.get('primary_key') else ''}{'  FK' if c.get('foreign_key') else ''})"
+            f"{c['name']} ({c['type']}{' PK' if c.get('primary_key') else ''}{' FK' if c.get('foreign_key') else ''})"
             for c in table.get("columns", [])[:10]
         )
         summary_parts.append(f"Table: {table['name']}\nColumns: {cols}")
