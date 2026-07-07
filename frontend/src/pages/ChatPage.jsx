@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Send, Loader2, Bot, AlertTriangle,
@@ -33,9 +33,12 @@ const LANGUAGES = [
   { code: 'ar', label: '🇸🇦 Arabic' },
 ]
 
+const DDL_TYPES = ['CREATE', 'ALTER', 'DROP']
+const isDDLType = (type) => DDL_TYPES.includes((type || '').toUpperCase())
+
 function estimateComplexity(text) {
   const lower = text.toLowerCase()
-  const complexKw = ['join','group','having','subquery','union','aggregate','window','partition','rank']
+  const complexKw = ['join','group','having','subquery','union','aggregate','window','partition','rank','create table','alter table','drop table','ddl']
   const score = complexKw.filter(k => lower.includes(k)).length + (text.length > 80 ? 1 : 0)
   if (score >= 3) return { label: 'Complex', color: 'text-red-400',    icon: Activity }
   if (score >= 1) return { label: 'Medium',  color: 'text-amber-400',  icon: Zap }
@@ -52,7 +55,6 @@ export default function ChatPage() {
   const bottomRef  = useRef(null)
   const textareaRef = useRef(null)
 
-  const queryClient = useQueryClient()
   const { user }                    = useAuthStore()
   const {
     activeConnection, sessions, activeSessionId, createSession,
@@ -136,7 +138,12 @@ export default function ChatPage() {
     mutationFn: (data) => queryAPI.execute(data),
     onSuccess: (r) => {
       setCurrentExecResult(r.data)
-      toast.success(`Done — ${r.data.rows?.length ?? r.data.rows_affected} rows in ${r.data.execution_time_ms?.toFixed(0)}ms`)
+      const result = r.data
+      if (isDDLType(result.query_type)) {
+        toast.success(result.message || 'DDL executed and schema refreshed')
+      } else {
+        toast.success(`Done — ${result.rows?.length ?? result.rows_affected} rows in ${result.execution_time_ms?.toFixed(0)}ms`)
+      }
     },
     onError: (e) => toast.error(e.response?.data?.detail || 'Execution failed'),
   })
@@ -344,14 +351,6 @@ useEffect(() => {
           onExecute={(queryId, confirm) => executeMut.mutate({ query_id: queryId, confirm })}
           isExecuting={executeMut.isPending}
           isPinned={!!pinnedQuery}
-          connectionId={activeConnection?.id}
-          onSchemaRefresh={() => {
-            if (activeConnection?.id) {
-              schemaAPI.refreshSchema(activeConnection.id)
-                .then(() => queryClient.invalidateQueries(['schema', activeConnection.id]))
-                .catch(() => {})
-            }
-          }}
         />
       )}
     </div>
@@ -525,7 +524,7 @@ function MessageBubble({ message, onExecute, isExecuting, onPin, isPinned }) {
               className="btn-primary text-xs px-3 py-1.5 flex items-center gap-1.5"
             >
               {isExecuting ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-              Run Query
+              {isDDLType(data.query_type) ? 'Run Schema' : 'Run Query'}
             </button>
 
             {/* Pin */}
@@ -612,8 +611,8 @@ function CopyButton({ text }) {
 
 function SqlHighlight({ sql }) {
   if (!sql) return null
-  const KW = /\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|INSERT|UPDATE|DELETE|INTO|VALUES|SET|AND|OR|NOT|NULL|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|IN|LIKE|BETWEEN|IS|DESC|ASC|WITH|CASE|WHEN|THEN|ELSE|END)\b/gi
-  const testKW = /^(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|INSERT|UPDATE|DELETE|INTO|VALUES|SET|AND|OR|NOT|NULL|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|IN|LIKE|BETWEEN|IS|DESC|ASC|WITH|CASE|WHEN|THEN|ELSE|END)$/i
+  const KW = /\b(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TABLE|INDEX|VIEW|COLUMN|PRIMARY KEY|FOREIGN KEY|REFERENCES|IF NOT EXISTS|IF EXISTS|INTO|VALUES|SET|AND|OR|NOT|NULL|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|IN|LIKE|BETWEEN|IS|DESC|ASC|WITH|CASE|WHEN|THEN|ELSE|END|DEFAULT|CURRENT_TIMESTAMP|VARCHAR|INTEGER|TEXT|DECIMAL|DATE|TIMESTAMP)\b/gi
+  const testKW = /^(SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TABLE|INDEX|VIEW|COLUMN|PRIMARY KEY|FOREIGN KEY|REFERENCES|IF NOT EXISTS|IF EXISTS|INTO|VALUES|SET|AND|OR|NOT|NULL|AS|DISTINCT|COUNT|SUM|AVG|MAX|MIN|IN|LIKE|BETWEEN|IS|DESC|ASC|WITH|CASE|WHEN|THEN|ELSE|END|DEFAULT|CURRENT_TIMESTAMP|VARCHAR|INTEGER|TEXT|DECIMAL|DATE|TIMESTAMP)$/i
   return sql.split(KW).map((p, i) =>
     testKW.test(p) ? <span key={i} className="text-indigo-400 font-semibold">{p}</span> : <span key={i}>{p}</span>
   )

@@ -3,8 +3,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-# ─── Auth ─────────────────────────────────────────────────────────────────────
-
+# Auth schemas
 class UserCreate(BaseModel):
     email: EmailStr
     username: str
@@ -51,11 +50,10 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-# ─── Connections ───────────────────────────────────────────────────────────────
-
+# Connection schemas
 class ConnectionCreate(BaseModel):
     name: str
-    db_type: str
+    db_type: str  # postgresql, mysql, sqlite
     host: Optional[str] = None
     port: Optional[int] = None
     database: Optional[str] = None
@@ -65,16 +63,17 @@ class ConnectionCreate(BaseModel):
     is_readonly: bool = True
 
 
-class EmptySQLiteCreate(BaseModel):
+class SQLiteDatabaseCreate(BaseModel):
     name: str
+    is_readonly: bool = False
 
     @validator("name")
     def validate_name(cls, v):
         v = v.strip()
         if len(v) < 2:
-            raise ValueError("Connection name must be at least 2 characters")
+            raise ValueError("Database name is too short")
         if len(v) > 80:
-            raise ValueError("Connection name is too long")
+            raise ValueError("Database name is too long")
         return v
 
 
@@ -88,20 +87,18 @@ class ConnectionResponse(BaseModel):
     username: Optional[str]
     is_active: bool
     is_readonly: bool
-    allow_ddl: bool = False
     created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-# ─── Query ────────────────────────────────────────────────────────────────────
-
+# Query schemas
 class QueryRequest(BaseModel):
     natural_language: str
     connection_id: int
     session_id: Optional[str] = None
-    mode: str = "simple"
+    mode: str = "simple"  # simple, learning, developer
     language: str = "en"
 
     @validator("natural_language")
@@ -139,6 +136,9 @@ class QueryResponse(BaseModel):
     clauses_explained: Optional[Dict[str, str]]
     warnings: List[str]
     share_token: Optional[str]
+    is_schema_change: bool = False
+    refresh_schema_required: bool = False
+    database_builder: Optional[Dict[str, Any]] = None
 
 
 class ExecuteRequest(BaseModel):
@@ -153,10 +153,12 @@ class ExecuteResponse(BaseModel):
     rows_affected: Optional[int] = 0
     execution_time_ms: float = 0.0
     error: Optional[str] = None
+    message: Optional[str] = None
+    query_type: Optional[str] = None
+    schema_refreshed: bool = False
 
 
-# ─── History ──────────────────────────────────────────────────────────────────
-
+# History schemas
 class QueryHistoryResponse(BaseModel):
     id: int
     natural_language: str
@@ -173,47 +175,3 @@ class QueryHistoryResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-# ─── DDL ──────────────────────────────────────────────────────────────────────
-
-class DDLGenerateRequest(BaseModel):
-    natural_language: str
-    connection_id: int
-
-    @validator("natural_language")
-    def validate_nl(cls, v):
-        if len(v.strip()) < 5:
-            raise ValueError("Description too short")
-        return v.strip()
-
-
-class DDLGenerateResponse(BaseModel):
-    sql: str
-    explanation: str
-    confidence_score: float
-    warnings: List[str]
-
-
-class DDLExecuteRequest(BaseModel):
-    sql: str
-    connection_id: int
-
-    @validator("sql")
-    def validate_ddl_sql(cls, v):
-        v = v.strip()
-        if not v:
-            raise ValueError("SQL cannot be empty")
-        first_word = v.upper().split()[0] if v.split() else ""
-        allowed = {"CREATE", "DROP", "ALTER", "TRUNCATE", "RENAME"}
-        if first_word not in allowed:
-            raise ValueError(f"Only DDL statements allowed. Got: {first_word}")
-        return v
-
-
-class DDLExecuteResponse(BaseModel):
-    success: bool
-    message: str
-    rows_affected: int
-    execution_time_ms: float
-    schema_refreshed: bool
