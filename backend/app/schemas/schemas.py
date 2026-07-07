@@ -88,6 +88,7 @@ class ConnectionResponse(BaseModel):
     username: Optional[str]
     is_active: bool
     is_readonly: bool
+    allow_ddl: bool = False
     created_at: datetime
 
     class Config:
