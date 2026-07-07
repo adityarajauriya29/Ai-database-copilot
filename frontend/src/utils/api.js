@@ -70,7 +70,7 @@ export const schemaAPI = {
     api.post('/schema/connections/upload-sqlite', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     }),
-  createEmptySQLite: (data) => api.post('/schema/connections/create-empty-sqlite', data),
+ createEmptySQLite: (data) => api.post('/schema/connections/create-sqlite-database', data),
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
